@@ -30,8 +30,9 @@ interface InstalledAddon extends AddonManifest {
 
 interface MediaItem {
   id: string | number;
-  imageUrl: string;
+  imageUrl: string; // Standard poster
   alt: string;
+  landscapeImageUrl?: string; // Optional landscape/background image
 }
 
 interface Catalog {
@@ -47,6 +48,7 @@ interface StremioMeta {
     name: string;
     poster?: string;
     posterShape?: 'square' | 'poster' | 'landscape';
+    background?: string;
     // Add other potential fields like description, year, etc.
 }
 
@@ -185,13 +187,24 @@ export default function HomePage() {
                  .then(data => {
                    if (data?.metas?.length > 0) {
                      const items: MediaItem[] = data.metas
-                        .filter(meta => meta.poster) // Ensure poster exists
-                        .map(meta => ({ id: meta.id, imageUrl: meta.poster!, alt: meta.name || meta.id }));
+                        .filter(meta => meta.poster || meta.background) // Ensure at least one image exists
+                        .map(meta => ({ 
+                            id: meta.id, 
+                            imageUrl: meta.poster!, // Keep poster as fallback/default
+                            alt: meta.name || meta.id,
+                            landscapeImageUrl: meta.background // Use background as landscape image if available
+                        }));
                      if (items.length > 0) {
-                         allFetchedCatalogs.push({ title: catalogTitle, items: items, id: catalogFullId });
-                         console.log(`Successfully processed ${items.length} items for: ${catalogTitle}`);
+                         // Filter out items that don't have *any* suitable image after mapping
+                         const validItems = items.filter(item => item.imageUrl || item.landscapeImageUrl);
+                         if (validItems.length > 0) {
+                             allFetchedCatalogs.push({ title: catalogTitle, items: validItems, id: catalogFullId });
+                             console.log(`Successfully processed ${validItems.length} items for: ${catalogTitle}`);
+                         } else {
+                              console.log(`Catalog ${catalogTitle} had items but none with posters or backgrounds.`);
+                         }
                      } else {
-                          console.log(`Catalog ${catalogTitle} had items but none with posters.`);
+                          console.log(`Catalog ${catalogTitle} had no items with posters or backgrounds initially.`);
                      }
                    } else {
                      console.warn(`No valid 'metas' array found for catalog: ${catalogTitle}`, data);
