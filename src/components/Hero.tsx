@@ -73,6 +73,28 @@ const ImagePreloader = ({ imageUrls }: { imageUrls: string[] }) => {
   );
 };
 
+// Helper function to enhance image URLs - add it before the Hero component declaration
+const getEnhancedImageUrl = (url: string): string => {
+  if (!url) return '';
+  
+  // Convert metahub background URLs from medium to large
+  if (url.includes('images.metahub.space/background/medium/')) {
+    return url.replace('/background/medium/', '/background/large/');
+  }
+  
+  // Convert metahub poster URLs from medium to large if needed
+  if (url.includes('images.metahub.space/poster/medium/')) {
+    return url.replace('/poster/medium/', '/poster/large/');
+  }
+  
+  // Convert metahub logo URLs from medium to large if needed
+  if (url.includes('images.metahub.space/logo/medium/')) {
+    return url.replace('/logo/medium/', '/logo/large/');
+  }
+  
+  return url;
+};
+
 const HERO_ROTATION_INTERVAL = 15000; // 15 seconds
 const MAX_HERO_ITEMS = 10; // Increased from 5 to 10 for more variety
 
@@ -100,13 +122,13 @@ const Hero: React.FC = () => {
     // Add all background images to preload
     heroItems.forEach(item => {
       if (item.background) {
-        imagesToPreload.push(item.background);
+        imagesToPreload.push(getEnhancedImageUrl(item.background));
       }
       if (item.logo) {
-        imagesToPreload.push(item.logo);
+        imagesToPreload.push(getEnhancedImageUrl(item.logo));
       }
       if (item.poster) {
-        imagesToPreload.push(item.poster);
+        imagesToPreload.push(getEnhancedImageUrl(item.poster));
       }
     });
     
@@ -324,10 +346,10 @@ const Hero: React.FC = () => {
   
   // Derived hero data
   const displayData = {
-    backgroundImage: heroContent?.background || fallbackHeroData.backgroundImage,
+    backgroundImage: heroContent?.background ? getEnhancedImageUrl(heroContent.background) : fallbackHeroData.backgroundImage,
     title: heroContent?.name || "",
     description: heroContent?.description || fallbackHeroData.description,
-    logoImage: heroContent?.logo || fallbackHeroData.titleLogo,
+    logoImage: heroContent?.logo ? getEnhancedImageUrl(heroContent.logo) : fallbackHeroData.titleLogo,
   };
 
   // All images to preload for smooth transitions
@@ -421,7 +443,7 @@ const Hero: React.FC = () => {
             {nextHeroContent?.background && (
               <div style={{ display: 'none' }}>
                 <Image
-                  src={nextHeroContent.background}
+                  src={getEnhancedImageUrl(nextHeroContent.background)}
                   alt="Next hero background"
                   layout="fill"
                   objectFit="cover"
@@ -469,7 +491,7 @@ const Hero: React.FC = () => {
             {nextHeroContent?.logo && (
               <div style={{ display: 'none' }}>
                 <Image 
-                  src={nextHeroContent.logo}
+                  src={getEnhancedImageUrl(nextHeroContent.logo)}
                   alt="Next title logo"
                   width={500}
                   height={135}

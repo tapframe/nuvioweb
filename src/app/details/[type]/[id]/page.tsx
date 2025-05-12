@@ -22,6 +22,8 @@ import EpisodeItem from './EpisodeItem';
 import Fade from '@mui/material/Fade';
 import Grow from '@mui/material/Grow';
 import { TransitionProps } from '@mui/material/transitions';
+import Zoom from '@mui/material/Zoom';
+import Slide from '@mui/material/Slide';
 
 interface MetaDetails {
   id: string;
@@ -88,12 +90,38 @@ const Transition = React.forwardRef(function Transition(
   return <Grow ref={ref} {...props} timeout={500} />;
 });
 
+// After animation duration constant
+const ANIMATION_DURATION = 600; // in ms
+const HERO_ANIMATION_DURATION = 1000; // Hero animation slightly longer for dramatic effect
+
 export default function DetailsPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
   const { type, id } = params;
   const addonId = searchParams.get('addonId');
+  
+  // Helper function to enhance image URLs with type safety
+  const getEnhancedImageUrl = (url: string | undefined): string => {
+    if (!url) return ''; // Empty string fallback instead of undefined
+    
+    // Convert metahub background URLs from medium to large
+    if (url.includes('images.metahub.space/background/medium/')) {
+      return url.replace('/background/medium/', '/background/large/');
+    }
+    
+    // Convert metahub poster URLs from medium to large if needed
+    if (url.includes('images.metahub.space/poster/medium/')) {
+      return url.replace('/poster/medium/', '/poster/large/');
+    }
+    
+    // Convert metahub logo URLs from medium to large if needed
+    if (url.includes('images.metahub.space/logo/medium/')) {
+      return url.replace('/logo/medium/', '/logo/large/');
+    }
+    
+    return url;
+  };
   
   const [details, setDetails] = useState<MetaDetails | null>(null);
   const [basicDetails, setBasicDetails] = useState<BasicMeta | null>(null);
@@ -109,6 +137,9 @@ export default function DetailsPage() {
   // State for Stream Dialog
   const [isStreamDialogOpen, setIsStreamDialogOpen] = useState(false);
   const [streamTarget, setStreamTarget] = useState<StreamTarget | null>(null);
+  
+  // Animation states
+  const [contentLoaded, setContentLoaded] = useState(false);
   
   // Helper function to check if an object has minimal required properties
   const hasMinimalProperties = (obj: any): boolean => {
@@ -556,6 +587,18 @@ export default function DetailsPage() {
     fetchDetails();
   }, [type, id, addonId]);
   
+  // Animation states
+  useEffect(() => {
+    if (details || basicDetails) {
+      // Small delay for a more natural feel
+      const timer = setTimeout(() => {
+        setContentLoaded(true);
+      }, 100);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [details, basicDetails]);
+  
   // Function to open the stream dialog
   const openStreamDialog = (target: StreamTarget) => {
     setStreamTarget(target);
@@ -762,43 +805,74 @@ export default function DetailsPage() {
       color: 'white',
       position: 'relative'
     }}>
-      {/* Background Image */}
-      <Box sx={{ 
-        position: 'absolute', 
-        top: 0, 
-        left: 0, 
-        right: 0, 
-        height: { xs: '70vh', md: '80vh' }, 
-        zIndex: 0,
-        '&::after': {
-          content: '""',
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: '75%',
-          backgroundImage: 'linear-gradient(to top, #141414, transparent)'
-        }
-      }}>
-        {details.background ? (
-          <Image
-            src={details.background}
-            alt={details.name}
-            layout="fill"
-            objectFit="cover"
-            priority
-          />
-        ) : details.poster ? (
-          <Image
-            src={details.poster}
-            alt={details.name}
-            layout="fill"
-            objectFit="cover"
-            priority
-            style={{ filter: 'blur(8px) brightness(0.7)' }}
-          />
-        ) : null}
-      </Box>
+      {/* Background Image with Animation */}
+      <Fade 
+        in={true} // Always animate in
+        timeout={HERO_ANIMATION_DURATION} 
+        appear={true} // Animate on first render
+      >
+        <Box sx={{ 
+          position: 'absolute', 
+          top: 0, 
+          left: 0, 
+          right: 0, 
+          height: { xs: '70vh', md: '80vh' }, 
+          zIndex: 0,
+          overflow: 'hidden', // Ensure image doesn't spill out
+          '&::after': {
+            content: '""',
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: '75%',
+            backgroundImage: 'linear-gradient(to top, #141414, transparent)',
+            opacity: contentLoaded ? 1 : 0, // Fade in gradient with content
+            transition: 'opacity 1.2s ease-in-out'
+          }
+        }}>
+          {details?.background ? (
+            <Box sx={{ 
+              width: '100%', 
+              height: '100%', 
+              position: 'relative',
+              transform: contentLoaded ? 'scale(1)' : 'scale(1.05)',
+              transition: 'transform 1.5s ease-out',
+            }}>
+              <Image
+                src={getEnhancedImageUrl(details.background)}
+                alt={details.name || ''}
+                layout="fill"
+                objectFit="cover"
+                priority
+                quality={90}
+                sizes="100vw"
+                loading="eager"
+              />
+            </Box>
+          ) : details?.poster ? (
+            <Box sx={{ 
+              width: '100%', 
+              height: '100%', 
+              position: 'relative',
+              transform: contentLoaded ? 'scale(1)' : 'scale(1.05)',
+              transition: 'transform 1.5s ease-out',
+            }}>
+              <Image
+                src={getEnhancedImageUrl(details.poster)}
+                alt={details.name || ''}
+                layout="fill"
+                objectFit="cover"
+                priority
+                quality={90}
+                sizes="100vw"
+                loading="eager"
+                style={{ filter: 'blur(8px) brightness(0.7)' }}
+              />
+            </Box>
+          ) : null}
+        </Box>
+      </Fade>
       
       {/* Content */}
       <Box sx={{ 
@@ -810,261 +884,286 @@ export default function DetailsPage() {
         flexDirection: 'column',
         flexGrow: 1
       }}>
-        {/* Title or Logo */}
-        {details.logo ? (
-          <Box sx={{ 
-            mb: 3, 
-            maxWidth: { xs: '70%', sm: '60%', md: '50%', lg: '40%' }
-          }}>
-            <Image 
-              src={details.logo}
-              alt={details.name}
-              width={500}
-              height={150}
-              layout="responsive"
-              priority
-            />
-          </Box>
-        ) : (
-          <Typography 
-            variant="h2" 
-            component="h1" 
-            sx={{ 
-              fontWeight: 'bold', 
-              fontSize: { xs: '2rem', sm: '3rem', md: '4rem' },
-              textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
-              mb: 2
-            }}
-          >
-            {details.name}
-          </Typography>
-        )}
-        
-        {/* Partial data warning */}
-        {partialMetadata && (
-          <Alert severity="info" sx={{ mb: 3, backgroundColor: '#333', color: 'white' }}>
-            Limited metadata available. Some information may be missing.
-          </Alert>
-        )}
-        
-        {/* Meta info row */}
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3, alignItems: 'center' }}>
-          {details.releaseInfo && (
-            <Typography variant="body1" sx={{ color: 'grey.300' }}>
-              {details.releaseInfo}
-            </Typography>
-          )}
-          
-          {details.certification && (
-            <Box sx={{ 
-              border: '1px solid grey.500', 
-              px: 1, 
-              borderRadius: '4px',
-              backgroundColor: 'rgba(0,0,0,0.3)'
-            }}>
-              <Typography variant="body2">
-                {details.certification}
-              </Typography>
-            </Box>
-          )}
-          
-          {details.runtime && (
-            <Typography variant="body1" sx={{ color: 'grey.300' }}>
-              {details.runtime}
-            </Typography>
-          )}
-          
-          {details.imdbRating && (
-            <Typography variant="body1" sx={{ color: '#f5c518', fontWeight: 'bold' }}>
-              ★ {details.imdbRating}
-            </Typography>
-          )}
-        </Box>
-        
-        {/* Action buttons - Update Play button */}
-        <Box sx={{ display: 'flex', gap: 2, mb: 4, flexWrap: 'wrap' }}>
-          <Button 
-            variant="contained"
-            startIcon={<PlayArrow />}
-            onClick={handlePlayClick}
-            sx={{ 
-              backgroundColor: 'white', 
-              color: 'black',
-              fontWeight: 'bold',
-              '&:hover': { backgroundColor: 'rgba(255,255,255,0.75)' }
-            }}
-          >
-            Play
-          </Button>
-          
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            sx={{ 
-              backgroundColor: 'rgba(133,133,133,0.6)', 
-              color: 'white',
-              '&:hover': { backgroundColor: 'rgba(133,133,133,0.4)' }
-            }}
-          >
-            My List
-          </Button>
-          
-          <Box sx={{ 
-            width: '40px', 
-            height: '40px', 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            borderRadius: '50%',
-            backgroundColor: 'rgba(42,42,42,0.6)',
-            cursor: 'pointer',
-            '&:hover': { backgroundColor: 'rgba(42,42,42,0.4)' }
-          }}>
-            <VolumeOffIcon />
-          </Box>
-        </Box>
-        
-        {/* Description */}
-        <Box sx={{ maxWidth: '50rem', mb: 5 }}>
-          <Typography variant="body1" sx={{ mb: 2, lineHeight: 1.6 }}>
-            {details.description || 'No description available'}
-          </Typography>
-          
-          {/* Additional metadata */}
-          {(!!details.cast?.length || !!details.director?.length || !!details.genres?.length) && (
-            <Box sx={{ mt: 3 }}>
-              {details.cast && details.cast.length > 0 && (
-                <Box sx={{ mb: 1, display: 'flex' }}>
-                  <Typography variant="body2" sx={{ color: 'grey.500', minWidth: '120px' }}>
-                    Cast:
-                  </Typography>
-                  <Typography variant="body2">
-                    {details.cast.slice(0, 5).join(', ')}
-                    {details.cast.length > 5 ? ', ...' : ''}
-                  </Typography>
-                </Box>
-              )}
-              
-              {details.director && details.director.length > 0 && (
-                <Box sx={{ mb: 1, display: 'flex' }}>
-                  <Typography variant="body2" sx={{ color: 'grey.500', minWidth: '120px' }}>
-                    Director:
-                  </Typography>
-                  <Typography variant="body2">
-                    {details.director.join(', ')}
-                  </Typography>
-                </Box>
-              )}
-              
-              {details.genres && details.genres.length > 0 && (
-                <Box sx={{ mb: 1, display: 'flex' }}>
-                  <Typography variant="body2" sx={{ color: 'grey.500', minWidth: '120px' }}>
-                    Genres:
-                  </Typography>
-                  <Typography variant="body2">
-                    {details.genres.join(', ')}
-                  </Typography>
-                </Box>
-              )}
-            </Box>
-          )}
-        </Box>
-        
-        {/* Episodes Section - Update episode onClick */}
-        {showEpisodesSection && (
-          <Box sx={{ width: '100%', mb: 8 }}>
-            <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-              <Typography variant="h4" component="h2" sx={{ fontWeight: 'bold' }}>
-                Episodes
-              </Typography>
-              
-              {availableSeasons.length > 1 && (
-                <FormControl 
-                  variant="outlined" 
-                  size="small" 
-                  sx={{ 
-                    minWidth: 120, 
-                    '.MuiOutlinedInput-root': {
-                      color: 'white',
-                      borderColor: 'grey.700',
-                      backgroundColor: 'rgba(0,0,0,0.3)',
-                    }
-                  }}
-                >
-                  <Select
-                    value={selectedSeason}
-                    onChange={(e) => setSelectedSeason(Number(e.target.value))}
-                    sx={{ 
-                      color: 'white',
-                      '.MuiOutlinedInput-notchedOutline': { borderColor: 'grey.700' },
-                      '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'grey.400' },
-                      '.MuiSvgIcon-root': { color: 'white' } 
-                    }}
-                  >
-                    {availableSeasons.map(season => (
-                      <MenuItem key={season} value={season}>
-                        Season {season}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              )}
-            </Box>
-            
-            <Divider sx={{ borderColor: 'grey.800', mb: 2 }} />
-            
-            {loadingEpisodes ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-                <CircularProgress color="inherit" size={32} />
-              </Box>
-            ) : episodesToDisplay.length > 0 ? (
-              <Box>
-                {episodesToDisplay.map((episode) => (
-                  <EpisodeItem 
-                    key={episode.id} 
-                    episode={episode} 
-                    onClick={() => handleEpisodeClick(episode)} 
-                  />
-                ))}
+        {/* Title or Logo with Fade animation */}
+        <Fade in={contentLoaded} timeout={ANIMATION_DURATION} style={{ transitionDelay: '100ms' }}>
+          <Box>
+            {details?.logo ? (
+              <Box sx={{ 
+                mb: 3, 
+                maxWidth: { xs: '70%', sm: '60%', md: '50%', lg: '40%' }
+              }}>
+                <Image 
+                  src={getEnhancedImageUrl(details.logo)}
+                  alt={details.name || 'Title logo'}
+                  width={500}
+                  height={150}
+                  layout="responsive"
+                  priority
+                  quality={95}
+                  loading="eager"
+                />
               </Box>
             ) : (
-              <Typography variant="body2" sx={{ color: 'grey.400', fontStyle: 'italic' }}>
-                {episodesError || 'No episode information available for this season'}
+              <Typography 
+                variant="h2" 
+                component="h1" 
+                sx={{ 
+                  fontWeight: 'bold', 
+                  fontSize: { xs: '2rem', sm: '3rem', md: '4rem' },
+                  textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
+                  mb: 2
+                }}
+              >
+                {details?.name || 'Untitled'}
               </Typography>
             )}
           </Box>
+        </Fade>
+        
+        {/* Partial data warning */}
+        {partialMetadata && (
+          <Fade in={contentLoaded} timeout={ANIMATION_DURATION} style={{ transitionDelay: '200ms' }}>
+            <Alert severity="info" sx={{ mb: 3, backgroundColor: '#333', color: 'white' }}>
+              Limited metadata available. Some information may be missing.
+            </Alert>
+          </Fade>
+        )}
+        
+        {/* Meta info row */}
+        <Fade in={contentLoaded} timeout={ANIMATION_DURATION} style={{ transitionDelay: '300ms' }}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3, alignItems: 'center' }}>
+            {details.releaseInfo && (
+              <Typography variant="body1" sx={{ color: 'grey.300' }}>
+                {details.releaseInfo}
+              </Typography>
+            )}
+            
+            {details.certification && (
+              <Box sx={{ 
+                border: '1px solid grey.500', 
+                px: 1, 
+                borderRadius: '4px',
+                backgroundColor: 'rgba(0,0,0,0.3)'
+              }}>
+                <Typography variant="body2">
+                  {details.certification}
+                </Typography>
+              </Box>
+            )}
+            
+            {details.runtime && (
+              <Typography variant="body1" sx={{ color: 'grey.300' }}>
+                {details.runtime}
+              </Typography>
+            )}
+            
+            {details.imdbRating && (
+              <Typography variant="body1" sx={{ color: '#f5c518', fontWeight: 'bold' }}>
+                ★ {details.imdbRating}
+              </Typography>
+            )}
+          </Box>
+        </Fade>
+        
+        {/* Action buttons */}
+        <Fade in={contentLoaded} timeout={ANIMATION_DURATION} style={{ transitionDelay: '400ms' }}>
+          <Box sx={{ display: 'flex', gap: 2, mb: 4, flexWrap: 'wrap' }}>
+            <Button 
+              variant="contained"
+              startIcon={<PlayArrow />}
+              onClick={handlePlayClick}
+              sx={{ 
+                backgroundColor: 'white', 
+                color: 'black',
+                fontWeight: 'bold',
+                '&:hover': { backgroundColor: 'rgba(255,255,255,0.75)' }
+              }}
+            >
+              Play
+            </Button>
+            
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              sx={{ 
+                backgroundColor: 'rgba(133,133,133,0.6)', 
+                color: 'white',
+                '&:hover': { backgroundColor: 'rgba(133,133,133,0.4)' }
+              }}
+            >
+              My List
+            </Button>
+            
+            <Box sx={{ 
+              width: '40px', 
+              height: '40px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              borderRadius: '50%',
+              backgroundColor: 'rgba(42,42,42,0.6)',
+              cursor: 'pointer',
+              '&:hover': { backgroundColor: 'rgba(42,42,42,0.4)' }
+            }}>
+              <VolumeOffIcon />
+            </Box>
+          </Box>
+        </Fade>
+        
+        {/* Description */}
+        <Fade in={contentLoaded} timeout={ANIMATION_DURATION} style={{ transitionDelay: '500ms' }}>
+          <Box sx={{ maxWidth: '50rem', mb: 5 }}>
+            <Typography variant="body1" sx={{ mb: 2, lineHeight: 1.6 }}>
+              {details.description || 'No description available'}
+            </Typography>
+            
+            {/* Additional metadata */}
+            {(!!details.cast?.length || !!details.director?.length || !!details.genres?.length) && (
+              <Box sx={{ mt: 3 }}>
+                {details.cast && details.cast.length > 0 && (
+                  <Box sx={{ mb: 1, display: 'flex' }}>
+                    <Typography variant="body2" sx={{ color: 'grey.500', minWidth: '120px' }}>
+                      Cast:
+                    </Typography>
+                    <Typography variant="body2">
+                      {details.cast.slice(0, 5).join(', ')}
+                      {details.cast.length > 5 ? ', ...' : ''}
+                    </Typography>
+                  </Box>
+                )}
+                
+                {details.director && details.director.length > 0 && (
+                  <Box sx={{ mb: 1, display: 'flex' }}>
+                    <Typography variant="body2" sx={{ color: 'grey.500', minWidth: '120px' }}>
+                      Director:
+                    </Typography>
+                    <Typography variant="body2">
+                      {details.director.join(', ')}
+                    </Typography>
+                  </Box>
+                )}
+                
+                {details.genres && details.genres.length > 0 && (
+                  <Box sx={{ mb: 1, display: 'flex' }}>
+                    <Typography variant="body2" sx={{ color: 'grey.500', minWidth: '120px' }}>
+                      Genres:
+                    </Typography>
+                    <Typography variant="body2">
+                      {details.genres.join(', ')}
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+            )}
+          </Box>
+        </Fade>
+        
+        {/* Episodes Section */}
+        {showEpisodesSection && (
+          <Slide direction="up" in={contentLoaded} timeout={ANIMATION_DURATION} style={{ transitionDelay: '600ms' }}>
+            <Box sx={{ width: '100%', mb: 8 }}>
+              <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                <Typography variant="h4" component="h2" sx={{ fontWeight: 'bold' }}>
+                  Episodes
+                </Typography>
+                
+                {availableSeasons.length > 1 && (
+                  <FormControl 
+                    variant="outlined" 
+                    size="small" 
+                    sx={{ 
+                      minWidth: 120, 
+                      '.MuiOutlinedInput-root': {
+                        color: 'white',
+                        borderColor: 'grey.700',
+                        backgroundColor: 'rgba(0,0,0,0.3)',
+                      }
+                    }}
+                  >
+                    <Select
+                      value={selectedSeason}
+                      onChange={(e) => setSelectedSeason(Number(e.target.value))}
+                      sx={{ 
+                        color: 'white',
+                        '.MuiOutlinedInput-notchedOutline': { borderColor: 'grey.700' },
+                        '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'grey.400' },
+                        '.MuiSvgIcon-root': { color: 'white' } 
+                      }}
+                    >
+                      {availableSeasons.map(season => (
+                        <MenuItem key={season} value={season}>
+                          Season {season}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
+              </Box>
+              
+              <Divider sx={{ borderColor: 'grey.800', mb: 2 }} />
+              
+              {loadingEpisodes ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                  <CircularProgress color="inherit" size={32} />
+                </Box>
+              ) : episodesToDisplay.length > 0 ? (
+                <Box>
+                  {episodesToDisplay.map((episode, index) => (
+                    <Zoom key={episode.id} in={contentLoaded} style={{ transitionDelay: `${700 + index * 100}ms` }} timeout={ANIMATION_DURATION}>
+                      <div> {/* Wrapper div required for Zoom */}
+                        <EpisodeItem 
+                          episode={episode} 
+                          onClick={() => handleEpisodeClick(episode)} 
+                        />
+                      </div>
+                    </Zoom>
+                  ))}
+                </Box>
+              ) : (
+                <Typography variant="body2" sx={{ color: 'grey.400', fontStyle: 'italic' }}>
+                  {episodesError || 'No episode information available for this season'}
+                </Typography>
+              )}
+            </Box>
+          </Slide>
         )}
         
         {/* More Like This section */}
-        <Box sx={{ 
-          mb: 8,
-          mt: 'auto',
-          pt: 5
-        }}>
-          <Typography variant="h5" component="h2" sx={{ mb: 3, fontWeight: 'bold' }}>
-            More Like This
-          </Typography>
-          
-          <Typography variant="body2" sx={{ color: 'grey.400', fontStyle: 'italic' }}>
-            Similar content recommendations will appear here
-          </Typography>
-        </Box>
+        <Fade in={contentLoaded} timeout={ANIMATION_DURATION} style={{ transitionDelay: '800ms' }}>
+          <Box sx={{ 
+            mb: 8,
+            mt: 'auto',
+            pt: 5
+          }}>
+            <Typography variant="h5" component="h2" sx={{ mb: 3, fontWeight: 'bold' }}>
+              More Like This
+            </Typography>
+            
+            <Typography variant="body2" sx={{ color: 'grey.400', fontStyle: 'italic' }}>
+              Similar content recommendations will appear here
+            </Typography>
+          </Box>
+        </Fade>
       </Box>
       
-      {/* Render the Stream Dialog using TransitionComponent */}
-      <StreamDialog
-        open={isStreamDialogOpen}
-        onClose={() => setIsStreamDialogOpen(false)}
-        TransitionComponent={Transition}
-        keepMounted
-        contentType={String(type)}
-        contentId={String(id)}
-        season={streamTarget?.season}
-        episode={streamTarget?.episode}
-        contentName={details?.name}
-        episodeInfo={dialogEpisodeInfo}
-        initialAddonId={addonId}
-      />
+      {/* Render the Stream Dialog with Grow transition */}
+      <Grow in={isStreamDialogOpen} timeout={500}> 
+        <div>
+          <StreamDialog
+            open={isStreamDialogOpen}
+            onClose={() => setIsStreamDialogOpen(false)}
+            TransitionComponent={Transition}
+            keepMounted
+            contentType={String(type)}
+            contentId={String(id)}
+            season={streamTarget?.season}
+            episode={streamTarget?.episode}
+            contentName={details?.name}
+            episodeInfo={dialogEpisodeInfo}
+            initialAddonId={addonId}
+          />
+        </div>
+      </Grow>
     </Box>
   );
 } 
