@@ -391,17 +391,31 @@ const Hero: React.FC = () => {
               bottom: 0,
               transition: 'opacity 1s ease, transform 1s ease',
               opacity: fadeIn ? 1 : 0,
-              transform: fadeIn ? 'scale(1)' : 'scale(1.05)'
+              transform: fadeIn ? 'scale(1)' : 'scale(1.05)',
+              overflow: 'hidden' // Ensure the image doesn't overflow
             }}
           >
-            <Image
-              src={displayData.backgroundImage}
-              alt="Hero background"
-              layout="fill"
-              objectFit="cover"
-              quality={90}
-              priority
-            />
+            <Box
+              sx={{
+                position: 'absolute',
+                top: '-10%', // Pull up slightly to show more of the image
+                left: '-5%',
+                right: '-5%',
+                bottom: '-5%',
+                width: '110%',
+                height: '120%'
+              }}
+            >
+              <Image
+                src={displayData.backgroundImage}
+                alt="Hero background"
+                layout="fill"
+                objectFit="cover"
+                objectPosition="center 20%"
+                quality={90}
+                priority
+              />
+            </Box>
             
             {/* Preload next image */}
             {nextHeroContent?.background && (
@@ -411,6 +425,7 @@ const Hero: React.FC = () => {
                   alt="Next hero background"
                   layout="fill"
                   objectFit="cover"
+                  objectPosition="center 20%"
                   priority
                 />
               </div>
