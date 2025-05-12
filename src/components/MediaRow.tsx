@@ -6,6 +6,28 @@ import Typography from '@mui/material/Typography';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 
+// Add the image enhancement helper function
+const getEnhancedImageUrl = (url: string): string => {
+  if (!url) return '';
+  
+  // Convert metahub background URLs from medium to large
+  if (url.includes('images.metahub.space/background/medium/')) {
+    return url.replace('/background/medium/', '/background/large/');
+  }
+  
+  // Convert metahub poster URLs from medium to large if needed
+  if (url.includes('images.metahub.space/poster/medium/')) {
+    return url.replace('/poster/medium/', '/poster/large/');
+  }
+  
+  // Convert metahub logo URLs from medium to large if needed
+  if (url.includes('images.metahub.space/logo/medium/')) {
+    return url.replace('/logo/medium/', '/logo/large/');
+  }
+  
+  return url;
+};
+
 interface MediaItem {
   id: string | number;
   imageUrl: string;
@@ -97,10 +119,12 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId }) => {
             }}
           >
             <Image
-              src={item.imageUrl}
+              src={getEnhancedImageUrl(item.imageUrl)}
               alt={item.alt}
               layout="fill"
               objectFit="cover"
+              quality={80} // Add quality parameter
+              loading="lazy" // Add lazy loading for rows
             />
             {/* Add overlay or other info on hover if needed */}
           </Box>
