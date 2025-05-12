@@ -38,6 +38,7 @@ interface Catalog {
   title: string;
   items: MediaItem[];
   id: string; // e.g., movie/top
+  addonId?: string; // Add addon ID for tracking source
 }
 
 // Stremio Catalog Response Structure (Simplified)
@@ -186,9 +187,19 @@ export default function HomePage() {
                    if (data?.metas?.length > 0) {
                      const items: MediaItem[] = data.metas
                         .filter(meta => meta.poster) // Ensure poster exists
-                        .map(meta => ({ id: meta.id, imageUrl: meta.poster!, alt: meta.name || meta.id }));
+                        .map(meta => ({ 
+                          id: meta.id, 
+                          imageUrl: meta.poster!, 
+                          alt: meta.name || meta.id,
+                          type: meta.type || catalog.type // Use meta type if available, otherwise fallback to catalog type
+                        }));
                      if (items.length > 0) {
-                         allFetchedCatalogs.push({ title: catalogTitle, items: items, id: catalogFullId });
+                         allFetchedCatalogs.push({ 
+                           title: catalogTitle, 
+                           items: items, 
+                           id: catalogFullId,
+                           addonId: addon.id // Store the addon ID to pass to MediaRow
+                         });
                          console.log(`Successfully processed ${items.length} items for: ${catalogTitle}`);
                      } else {
                           console.log(`Catalog ${catalogTitle} had items but none with posters.`);
@@ -248,7 +259,12 @@ export default function HomePage() {
              </Typography>
          )}
          {!isLoading && catalogs.map((catalog) => (
-            <MediaRow key={catalog.id} title={catalog.title} items={catalog.items} />
+            <MediaRow 
+              key={catalog.id} 
+              title={catalog.title} 
+              items={catalog.items} 
+              addonId={catalog.addonId} 
+            />
          ))}
       </Box>
     </Box>
