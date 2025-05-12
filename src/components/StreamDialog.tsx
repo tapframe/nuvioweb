@@ -26,6 +26,8 @@ import MenuItem from '@mui/material/MenuItem';
 import InputLabel from '@mui/material/InputLabel';
 import IconButton from '@mui/material/IconButton';
 import CloseIcon from '@mui/icons-material/Close';
+import { TransitionProps } from '@mui/material/transitions';
+import Collapse from '@mui/material/Collapse';
 
 // Interfaces (Copied from stream page)
 interface Stream {
@@ -61,6 +63,12 @@ interface StreamDialogProps {
   contentName?: string;
   episodeInfo?: string;
   initialAddonId?: string | null;
+  TransitionComponent?: React.ComponentType<
+    TransitionProps & {
+      children: React.ReactElement<any, any>;
+    }
+  >;
+  keepMounted?: boolean;
 }
 
 export default function StreamDialog({
@@ -73,6 +81,8 @@ export default function StreamDialog({
   contentName = 'Content',
   episodeInfo = '',
   initialAddonId,
+  TransitionComponent,
+  keepMounted,
 }: StreamDialogProps) {
   const [streams, setStreams] = useState<Stream[]>([]);
   const [loading, setLoading] = useState(false); // Start as false, fetch on open
@@ -259,6 +269,8 @@ export default function StreamDialog({
       onClose={onClose} 
       maxWidth="md" 
       fullWidth
+      TransitionComponent={TransitionComponent}
+      keepMounted={keepMounted}
       PaperProps={{
         sx: {
           backgroundColor: '#222', // Dark background for dialog
@@ -289,134 +301,141 @@ export default function StreamDialog({
         </IconButton>
       </DialogTitle>
 
-      <DialogContent dividers sx={{ bgcolor: '#141414', p: { xs: 2, md: 3 } }}>
-        {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', p: 5 }}>
+      <DialogContent dividers sx={{ bgcolor: '#141414', p: { xs: 2, md: 3 }, position: 'relative', minHeight: '150px' }}>
+        {/* Loading indicator */}
+        {loading && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}>
             <CircularProgress color="inherit" />
           </Box>
-        ) : error ? (
-          <Alert
-            severity="warning"
-            sx={{
-              backgroundColor: '#333',
-              color: 'white',
-              '.MuiAlert-icon': { color: 'white' }
-            }}
-          >
-            {error}
-          </Alert>
-        ) : (
-          <>
-            {/* Addon filter */}
-            {availableAddons.length > 1 && (
-              <Box sx={{ mb: 3, maxWidth: '300px' }}>
-                <FormControl fullWidth variant="filled" size="small">
-                  <InputLabel
-                    id="addon-select-label"
-                    sx={{ color: 'grey.300' }}
-                  >
-                    Addon Source
-                  </InputLabel>
-                  <Select
-                    labelId="addon-select-label"
-                    value={selectedAddon || ''}
-                    onChange={handleAddonChange}
-                    label="Addon Source"
-                    sx={{
-                      color: 'white',
-                      backgroundColor: 'rgba(255,255,255,0.08)',
-                      '&:hover': { backgroundColor: 'rgba(255,255,255,0.12)' },
-                      '.MuiFilledInput-input': { py: 1.5 },
-                      '.MuiSvgIcon-root': { color: 'white' }
-                    }}
-                    disableUnderline
-                  >
-                    {availableAddons.map(addonId => {
-                      const addonName = streams.find(s => s.addon === addonId)?.addonName || addonId;
-                      return (
-                        <MenuItem key={addonId} value={addonId} sx={{ bgcolor: '#333', '&:hover': { bgcolor: '#444' } }}>
-                          {addonName}
-                        </MenuItem>
-                      );
-                    })}
-                  </Select>
-                </FormControl>
-              </Box>
-            )}
-
-            {/* Streams list */}
-            <Typography variant="body1" component="h3" sx={{ mb: 1.5, fontWeight: 'medium', color: 'grey.300' }}>
-              Available Streams {filteredStreams.length > 0 && `(${filteredStreams.length})`}
-            </Typography>
-
-            {filteredStreams.length > 0 ? (
-              <List sx={{ p: 0, bgcolor: 'rgba(0,0,0,0.2)', borderRadius: '4px', overflow: 'hidden' }}>
-                {filteredStreams.map((stream, index) => (
-                  <React.Fragment key={`${stream.addon}-${index}`}>
-                    {index > 0 && <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)' }} />}
-                    <ListItem
-                      component="div" // Use div for semantic correctness inside Dialog
-                      onClick={() => handleStreamSelect(stream)}
-                      sx={{
-                        cursor: 'pointer',
-                        '&:hover': {
-                          backgroundColor: 'rgba(255,255,255,0.08)'
-                        },
-                        py: 1.5
-                      }}
-                    >
-                      <ListItemIcon sx={{ color: 'white', minWidth: '40px' }}>
-                        {stream.external ? <PublicIcon fontSize="small" /> : getQualityIcon(stream)}
-                      </ListItemIcon>
-                      <ListItemText
-                        primary={
-                          <Typography variant="body1">
-                            {stream.title || stream.name || `Stream ${index + 1}`}
-                          </Typography>
-                        }
-                        secondary={
-                          <Box component="span" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, color: 'grey.400', fontSize: '0.8rem', mt: 0.5 }}>
-                            {stream.quality && (
-                              <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.1)', px: 1, borderRadius: '4px', fontSize: '0.7rem' }}>
-                                {stream.quality}
-                              </Box>
-                            )}
-                            {stream.resolution && (
-                              <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.1)', px: 1, borderRadius: '4px', fontSize: '0.7rem' }}>
-                                {stream.resolution}
-                              </Box>
-                            )}
-                            {stream.size && (
-                              <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.1)', px: 1, borderRadius: '4px', fontSize: '0.7rem' }}>
-                                {stream.size}
-                              </Box>
-                            )}
-                            <Box component="span" sx={{ fontSize: '0.7rem', opacity: 0.8 }}>
-                              via {stream.addonName}
-                            </Box>
-                          </Box>
-                        }
-                        secondaryTypographyProps={{ component: 'div' }} // Ensure secondary is treated as a block
-                      />
-                      <ListItemIcon sx={{ color: '#e50914', minWidth: '30px' }}>
-                        <PlayArrowIcon fontSize="small" />
-                      </ListItemIcon>
-                    </ListItem>
-                  </React.Fragment>
-                ))}
-              </List>
-            ) : (
-              <Typography variant="body2" sx={{ color: 'grey.400', textAlign: 'center', py: 2 }}>
-                {streams.length > 0 ? 'No streams available from this addon' : 'No streams found'}
-              </Typography>
-            )}
-            
-             {/* Hint text */}
-             <Typography variant="caption" sx={{ display: 'block', color: 'grey.500', fontStyle: 'italic', textAlign: 'center', mt: 2 }}>
-                Clicking on a stream may open an external player or website.
-             </Typography>
-          </>
         )}
+
+        {/* Content that appears after loading - wrapped in Collapse */}
+        <Collapse in={!loading} timeout="auto" unmountOnExit> 
+          {error ? (
+            // Error Alert
+            <Alert
+              severity="warning"
+              sx={{
+                backgroundColor: '#333',
+                color: 'white',
+                '.MuiAlert-icon': { color: 'white' },
+                minHeight: '100px',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
+              {error}
+            </Alert>
+          ) : (
+            // Streams List and Filter
+            <>
+              {/* Addon filter */}
+              {availableAddons.length > 1 && (
+                <Box sx={{ mb: 3, maxWidth: '300px' }}>
+                  <FormControl fullWidth variant="filled" size="small">
+                    <InputLabel id="addon-select-label" sx={{ color: 'grey.300' }}>
+                      Addon Source
+                    </InputLabel>
+                    <Select
+                      labelId="addon-select-label"
+                      value={selectedAddon || ''}
+                      onChange={handleAddonChange}
+                      label="Addon Source"
+                      sx={{
+                        color: 'white',
+                        backgroundColor: 'rgba(255,255,255,0.08)',
+                        '&:hover': { backgroundColor: 'rgba(255,255,255,0.12)' },
+                        '.MuiFilledInput-input': { py: 1.5 },
+                        '.MuiSvgIcon-root': { color: 'white' }
+                      }}
+                      disableUnderline
+                    >
+                      {availableAddons.map(addonId => {
+                        const addonName = streams.find(s => s.addon === addonId)?.addonName || addonId;
+                        return (
+                          <MenuItem key={addonId} value={addonId} sx={{ bgcolor: '#333', '&:hover': { bgcolor: '#444' } }}>
+                            {addonName}
+                          </MenuItem>
+                        );
+                      })}
+                    </Select>
+                  </FormControl>
+                </Box>
+              )}
+
+              {/* Streams list Title */}
+              <Typography variant="body1" component="h3" sx={{ mb: 1.5, fontWeight: 'medium', color: 'grey.300' }}>
+                Available Streams {filteredStreams.length > 0 && `(${filteredStreams.length})`}
+              </Typography>
+
+              {/* Streams List or "Not Found" message */}
+              {filteredStreams.length > 0 ? (
+                <List sx={{ p: 0, bgcolor: 'rgba(0,0,0,0.2)', borderRadius: '4px', overflow: 'hidden' }}>
+                  {filteredStreams.map((stream, index) => (
+                    <React.Fragment key={`${stream.addon}-${index}`}>
+                      {index > 0 && <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)' }} />}
+                      <ListItem
+                        component="div"
+                        onClick={() => handleStreamSelect(stream)}
+                        sx={{
+                          cursor: 'pointer',
+                          '&:hover': { backgroundColor: 'rgba(255,255,255,0.08)' },
+                          py: 1.5
+                        }}
+                      >
+                        <ListItemIcon sx={{ color: 'white', minWidth: '40px' }}>
+                          {stream.external ? <PublicIcon fontSize="small" /> : getQualityIcon(stream)}
+                        </ListItemIcon>
+                        <ListItemText
+                          primary={
+                            <Typography variant="body1">
+                              {stream.title || stream.name || `Stream ${index + 1}`}
+                            </Typography>
+                          }
+                          secondary={
+                            <Box component="span" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, color: 'grey.400', fontSize: '0.8rem', mt: 0.5 }}>
+                              {stream.quality && (
+                                <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.1)', px: 1, borderRadius: '4px', fontSize: '0.7rem' }}>
+                                  {stream.quality}
+                                </Box>
+                              )}
+                              {stream.resolution && (
+                                <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.1)', px: 1, borderRadius: '4px', fontSize: '0.7rem' }}>
+                                  {stream.resolution}
+                                </Box>
+                              )}
+                              {stream.size && (
+                                <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.1)', px: 1, borderRadius: '4px', fontSize: '0.7rem' }}>
+                                  {stream.size}
+                                </Box>
+                              )}
+                              <Box component="span" sx={{ fontSize: '0.7rem', opacity: 0.8 }}>
+                                via {stream.addonName}
+                              </Box>
+                            </Box>
+                          }
+                          secondaryTypographyProps={{ component: 'div' }}
+                        />
+                        <ListItemIcon sx={{ color: '#e50914', minWidth: '30px' }}>
+                          <PlayArrowIcon fontSize="small" />
+                        </ListItemIcon>
+                      </ListItem>
+                    </React.Fragment>
+                  ))}
+                </List>
+              ) : (
+                <Typography variant="body2" sx={{ color: 'grey.400', textAlign: 'center', py: 2 }}>
+                  {streams.length > 0 ? 'No streams available from this addon' : 'No streams found'}
+                </Typography>
+              )}
+              
+               {/* Hint text */}
+               <Typography variant="caption" sx={{ display: 'block', color: 'grey.500', fontStyle: 'italic', textAlign: 'center', mt: 2 }}>
+                  Clicking on a stream may open an external player or website.
+               </Typography>
+            </>
+          )}
+        </Collapse>
       </DialogContent>
 
       <DialogActions sx={{ p: 1.5, bgcolor: '#181818' }}>

@@ -19,6 +19,9 @@ import Divider from '@mui/material/Divider';
 import StreamDialog from '../../../../components/StreamDialog';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import EpisodeItem from './EpisodeItem';
+import Fade from '@mui/material/Fade';
+import Grow from '@mui/material/Grow';
+import { TransitionProps } from '@mui/material/transitions';
 
 interface MetaDetails {
   id: string;
@@ -74,6 +77,16 @@ interface StreamTarget {
   season?: number | null;
   episode?: number | null;
 }
+
+// Define the Transition component using Grow
+const Transition = React.forwardRef(function Transition(
+  props: TransitionProps & {
+    children: React.ReactElement<any, any>;
+  },
+  ref: React.Ref<unknown>,
+) {
+  return <Grow ref={ref} {...props} timeout={500} />;
+});
 
 export default function DetailsPage() {
   const params = useParams();
@@ -1038,10 +1051,12 @@ export default function DetailsPage() {
         </Box>
       </Box>
       
-      {/* Render the Stream Dialog */}
+      {/* Render the Stream Dialog using TransitionComponent */}
       <StreamDialog
         open={isStreamDialogOpen}
         onClose={() => setIsStreamDialogOpen(false)}
+        TransitionComponent={Transition}
+        keepMounted
         contentType={String(type)}
         contentId={String(id)}
         season={streamTarget?.season}
