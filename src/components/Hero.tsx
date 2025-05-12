@@ -10,6 +10,8 @@ import CircularProgress from '@mui/material/CircularProgress';
 // import PlayArrowIcon from '@mui/icons-material/PlayArrow'; 
 import Image from 'next/image';
 import Head from 'next/head';
+import { useRouter } from 'next/navigation';
+import StreamDialog from '../components/StreamDialog';
 
 // Extended StremioMeta interface to include hero-specific fields
 interface HeroMeta {
@@ -99,11 +101,19 @@ const HERO_ROTATION_INTERVAL = 15000; // 15 seconds
 const MAX_HERO_ITEMS = 10; // Increased from 5 to 10 for more variety
 
 const Hero: React.FC = () => {
+  const router = useRouter();
   const [heroItems, setHeroItems] = useState<HeroMeta[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [fadeIn, setFadeIn] = useState(true);
+  
+  // Add state for the stream dialog
+  const [isStreamDialogOpen, setIsStreamDialogOpen] = useState(false);
+  const [streamContentType, setStreamContentType] = useState<string>('');
+  const [streamContentId, setStreamContentId] = useState<string>('');
+  const [streamContentName, setStreamContentName] = useState<string>('');
+  
   const rotationTimerRef = useRef<NodeJS.Timeout | null>(null);
   const imagesPreloaded = useRef<boolean>(false);
 
@@ -355,6 +365,45 @@ const Hero: React.FC = () => {
   // All images to preload for smooth transitions
   const imagesToPreload = getImagesToPreload();
 
+  // Update navigation functions
+  const handlePlayClick = () => {
+    if (!heroContent) return;
+    
+    if (heroContent.type === 'series') {
+      // For series, navigate to details page where they can select episodes
+      router.push(`/details/${heroContent.type}/${heroContent.id}`);
+    } else {
+      // For movies, open the stream dialog directly
+      setStreamContentType(heroContent.type);
+      setStreamContentId(heroContent.id);
+      setStreamContentName(heroContent.name);
+      setIsStreamDialogOpen(true);
+      
+      // Pause the hero rotation while dialog is open
+      if (rotationTimerRef.current) {
+        clearInterval(rotationTimerRef.current);
+        rotationTimerRef.current = null;
+      }
+    }
+  };
+
+  const handleMoreInfoClick = () => {
+    if (!heroContent) return;
+    
+    // Navigate to the details page for this content
+    router.push(`/details/${heroContent.type}/${heroContent.id}`);
+  };
+
+  // Add handler to restart rotation when dialog closes
+  const handleStreamDialogClose = () => {
+    setIsStreamDialogOpen(false);
+    
+    // Restart the rotation if we have multiple hero items
+    if (heroItems.length > 1 && !rotationTimerRef.current) {
+      rotationTimerRef.current = setInterval(rotateHero, HERO_ROTATION_INTERVAL);
+    }
+  };
+
   return (
     <>
       {/* Preload all images using link tags */}
@@ -574,6 +623,7 @@ const Hero: React.FC = () => {
             <Button
               variant="contained"
               startIcon={<img src="/assets/images/play-icon-new.svg" alt="" width={24} height={24} />}
+              onClick={handlePlayClick}
               sx={{ 
                 backgroundColor: 'white',
                 color: 'black',
@@ -586,11 +636,12 @@ const Hero: React.FC = () => {
                 '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.8)' }
               }}
             >
-              Oynat
+              Play
             </Button>
             <Button
               variant="contained"
               startIcon={<img src="/assets/images/more-info-icon-new.svg" alt="" width={24} height={24} />}
+              onClick={handleMoreInfoClick}
               sx={{
                 backgroundColor: 'rgba(109, 109, 110, 0.7)',
                 color: 'white',
@@ -603,7 +654,7 @@ const Hero: React.FC = () => {
                 '&:hover': { backgroundColor: 'rgba(109, 109, 110, 0.4)' }
               }}
             >
-              Daha Fazla Bilgi
+              More Info
             </Button>
           </Box>
           
@@ -626,6 +677,16 @@ const Hero: React.FC = () => {
           )}
         </Box>
       </Box>
+
+      {/* Add the Stream Dialog */}
+      <StreamDialog
+        open={isStreamDialogOpen}
+        onClose={handleStreamDialogClose}
+        contentType={streamContentType}
+        contentId={streamContentId}
+        contentName={streamContentName}
+        episodeInfo=""
+      />
     </>
   );
 };
