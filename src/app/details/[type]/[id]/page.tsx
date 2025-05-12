@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import Box from '@mui/material/Box';
@@ -12,6 +12,10 @@ import AddIcon from '@mui/icons-material/Add';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import Link from 'next/link';
 import Alert from '@mui/material/Alert';
+import Select from '@mui/material/Select';
+import MenuItem from '@mui/material/MenuItem';
+import FormControl from '@mui/material/FormControl';
+import Divider from '@mui/material/Divider';
 
 interface MetaDetails {
   id: string;
@@ -32,6 +36,8 @@ interface MetaDetails {
   language?: string[];
   certification?: string;
   trailer?: string;
+  videos?: { id: string; title: string; season?: number; episode?: number }[];
+  seasons?: Season[];
 }
 
 // Basic metadata we can extract from catalog items
@@ -40,6 +46,24 @@ interface BasicMeta {
   type: string;
   name: string;
   poster?: string;
+}
+
+// Add episode interfaces
+interface Episode {
+  id: string;
+  title: string;
+  overview?: string;
+  thumbnail?: string;
+  season: number;
+  episode: number;
+  released?: string;
+  runtime?: string;
+}
+
+interface Season {
+  season: number;
+  title: string;
+  episodes: Episode[];
 }
 
 export default function DetailsPage() {
@@ -53,6 +77,11 @@ export default function DetailsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [partialMetadata, setPartialMetadata] = useState<boolean>(false);
+  const [selectedSeason, setSelectedSeason] = useState<number>(1);
+  const [episodes, setEpisodes] = useState<Episode[]>([]);
+  const [loadingEpisodes, setLoadingEpisodes] = useState<boolean>(false);
+  const [episodesError, setEpisodesError] = useState<string | null>(null);
+  const [availableSeasons, setAvailableSeasons] = useState<number[]>([]);
   
   // Helper function to check if an object has minimal required properties
   const hasMinimalProperties = (obj: any): boolean => {
@@ -118,6 +147,277 @@ export default function DetailsPage() {
       return null;
     }
   };
+  
+  // Function to fetch episodes data from addons
+  const fetchEpisodes = useCallback(async (addonBaseUrl: string, seriesType: string, seriesId: string, season: number) => {
+    setLoadingEpisodes(true);
+    setEpisodesError(null);
+    
+    try {
+      // Use the exact format provided: meta/series/tt0944947/season=1.json
+      const metaSeasonUrl = `${addonBaseUrl}/meta/${seriesType}/${seriesId}/season=${season}.json`;
+      console.log(`Fetching episodes using correct meta endpoint: ${metaSeasonUrl}`);
+      
+      const response = await fetch(metaSeasonUrl);
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Process the response data - **Check inside data.meta**
+        if (data && data.meta && data.meta.episodes) {
+          // Direct episodes array inside meta
+          const formattedEpisodes = data.meta.episodes.map((ep: any) => ({
+            id: ep.id || `${seriesId}-s${season}-e${ep.episode || 0}`,
+            title: ep.title || ep.name || `Episode ${ep.episode || 0}`,
+            overview: ep.overview || ep.description || ep.synopsis || '',
+            thumbnail: ep.thumbnail || ep.poster || '',
+            season: season,
+            episode: ep.episode || ep.number || 0,
+            released: ep.released || ep.air_date || ep.releaseInfo || '',
+            runtime: ep.runtime || ep.duration || ''
+          }));
+          
+          setEpisodes(formattedEpisodes);
+          return formattedEpisodes;
+        } else if (data && data.meta && data.meta.videos) {
+          // Videos array format inside meta
+          const videoEpisodes = data.meta.videos
+            .filter((v: any) => v.season === season || v.season === undefined) // Keep filtering by season if present
+            .map((v: any) => ({
+              id: v.id || `${seriesId}-s${season}-e${v.episode || 0}`,
+              title: v.title || v.name || `Episode ${v.episode || 0}`,
+              overview: v.overview || v.description || '',
+              thumbnail: v.thumbnail || v.poster || '',
+              season: season,
+              episode: v.episode || v.number || 0, // Use v.number as fallback for episode number
+              released: v.released || '',
+              runtime: v.runtime || ''
+            }));
+            
+          setEpisodes(videoEpisodes);
+          return videoEpisodes;
+        } else if (data && Array.isArray(data.metas)) {
+          // Some addons might return a metas array directly (less common)
+          const episodesMetas = data.metas
+            .filter((m: any) => (m.type === 'episode' || m.episode) && (m.season === season || m.season === undefined))
+            .map((m: any) => ({
+              id: m.id || `${seriesId}-s${season}-e${m.episode || 0}`,
+              title: m.name || m.title || `Episode ${m.episode || 0}`,
+              overview: m.overview || m.description || '',
+              thumbnail: m.poster || m.thumbnail || '',
+              season: season,
+              episode: m.episode || 0,
+              released: m.releaseInfo || '',
+              runtime: m.runtime || ''
+            }));
+            
+          if (episodesMetas.length > 0) {
+            setEpisodes(episodesMetas);
+            return episodesMetas;
+          }
+        }
+      }
+      
+      // Try the older formats as fallbacks
+      console.log('Meta endpoint failed or did not contain episodes, trying legacy formats...');
+      
+      // Legacy format 1
+      const episodesUrl = `${addonBaseUrl}/series/${seriesId}/seasons/${season}/episodes.json`;
+      console.log(`Trying legacy format: ${episodesUrl}`);
+      
+      const legacyResponse = await fetch(episodesUrl);
+      
+      if (!legacyResponse.ok) {
+        // Legacy format 2
+        const alternativeUrl = `${addonBaseUrl}/episodes/${seriesId}/${season}.json`;
+        console.log(`Trying alternative episodes URL: ${alternativeUrl}`);
+        
+        const alternativeResponse = await fetch(alternativeUrl);
+        
+        if (!alternativeResponse.ok) {
+          throw new Error(`Failed to fetch episodes data from any known format`);
+        }
+        
+        const data = await alternativeResponse.json();
+        
+        if (data && Array.isArray(data.episodes)) {
+          const formattedEpisodes = data.episodes.map((ep: any) => ({
+            id: ep.id || `${seriesId}-s${season}-e${ep.episode || 0}`,
+            title: ep.title || ep.name || `Episode ${ep.episode || 0}`,
+            overview: ep.overview || ep.description || ep.synopsis || '',
+            thumbnail: ep.thumbnail || ep.poster || '',
+            season: season,
+            episode: ep.episode || ep.number || 0,
+            released: ep.released || ep.air_date || ep.releaseInfo || '',
+            runtime: ep.runtime || ep.duration || ''
+          }));
+          
+          setEpisodes(formattedEpisodes);
+          return formattedEpisodes;
+        }
+      } else {
+        const data = await legacyResponse.json();
+        
+        if (data && Array.isArray(data.episodes)) {
+          const formattedEpisodes = data.episodes.map((ep: any) => ({
+            id: ep.id || `${seriesId}-s${season}-e${ep.episode || 0}`,
+            title: ep.title || ep.name || `Episode ${ep.episode || 0}`,
+            overview: ep.overview || ep.description || ep.synopsis || '',
+            thumbnail: ep.thumbnail || ep.poster || '',
+            season: season,
+            episode: ep.episode || ep.number || 0,
+            released: ep.released || ep.air_date || ep.releaseInfo || '',
+            runtime: ep.runtime || ep.duration || ''
+          }));
+          
+          setEpisodes(formattedEpisodes);
+          return formattedEpisodes;
+        }
+      }
+      
+      throw new Error('No valid episodes data found in any format');
+    } catch (err: any) {
+      console.error(`Error fetching episodes for ${seriesId} season ${season}:`, err);
+      setEpisodesError(err.message || 'Failed to load episodes');
+      return null;
+    } finally {
+      setLoadingEpisodes(false);
+    }
+  }, []);
+
+  // Function to fetch seasons data and determine available seasons
+  const fetchSeasons = useCallback(async (addonBaseUrl: string, seriesType: string, seriesId: string) => {
+    try {
+      // First try to get data from the meta endpoint which should contain videos
+      const metaUrl = `${addonBaseUrl}/meta/${seriesType}/${seriesId}.json`;
+      console.log(`Trying to extract seasons from meta endpoint: ${metaUrl}`);
+      
+      const response = await fetch(metaUrl);
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Check if we have videos in the meta object
+        if (data && data.meta && Array.isArray(data.meta.videos)) {
+          // Extract unique season numbers from videos array as explicit numbers
+          const seasonNumbers: number[] = [];
+          
+          data.meta.videos.forEach((video: any) => {
+            if (video.season !== undefined && video.season !== null) {
+              const seasonNum = Number(video.season);
+              if (!isNaN(seasonNum) && !seasonNumbers.includes(seasonNum)) {
+                seasonNumbers.push(seasonNum);
+              }
+            }
+          });
+          
+          // Sort the season numbers
+          seasonNumbers.sort((a, b) => a - b);
+          
+          if (seasonNumbers.length > 0) {
+            console.log(`Found ${seasonNumbers.length} seasons in meta data:`, seasonNumbers);
+            setAvailableSeasons(seasonNumbers);
+            return seasonNumbers;
+          }
+        }
+      }
+      
+      // Fallback to direct seasons endpoint
+      const seasonsUrl = `${addonBaseUrl}/series/${seriesId}/seasons.json`;
+      console.log(`Fetching seasons from: ${seasonsUrl}`);
+      
+      const seasonsResponse = await fetch(seasonsUrl);
+      
+      if (seasonsResponse.ok) {
+        const data = await seasonsResponse.json();
+        
+        if (data && Array.isArray(data.seasons)) {
+          const seasonNumbers: number[] = [];
+          
+          data.seasons.forEach((season: any) => {
+            const seasonNum = Number(season.season || season.number || 1);
+            if (!isNaN(seasonNum) && !seasonNumbers.includes(seasonNum)) {
+              seasonNumbers.push(seasonNum);
+            }
+          });
+          
+          seasonNumbers.sort((a, b) => a - b);
+          
+          console.log(`Found ${seasonNumbers.length} seasons:`, seasonNumbers);
+          setAvailableSeasons(seasonNumbers);
+          return seasonNumbers;
+        }
+      }
+      
+      // Default to at least season 1
+      console.log('No seasons data found, defaulting to season 1');
+      setAvailableSeasons([1]);
+      return [1];
+    } catch (err) {
+      console.error(`Error fetching seasons for ${seriesId}:`, err);
+      setAvailableSeasons([1]);
+      return [1];
+    }
+  }, []);
+  
+  // Effect to fetch episodes when season changes or when details are loaded
+  useEffect(() => {
+    if (details && details.type === 'series') {
+      // Get addon base URL from any matched addon
+      const getAddonBaseUrl = async () => {
+        const storedData = localStorage.getItem('installedAddons');
+        if (!storedData) return null;
+        
+        const loadedAddons = JSON.parse(storedData);
+        
+        // Prioritize the specific addon if addonId is provided
+        const prioritizedAddons = [...loadedAddons];
+        if (addonId) {
+          const addonIndex = prioritizedAddons.findIndex(a => a.id === addonId);
+          if (addonIndex >= 0) {
+            const [targetAddon] = prioritizedAddons.splice(addonIndex, 1);
+            prioritizedAddons.unshift(targetAddon);
+          }
+        }
+        
+        // Convert params to string to ensure they're not undefined
+        const contentType = typeof type === 'string' ? type : String(type);
+        const contentId = typeof id === 'string' ? id : String(id);
+        
+        for (const addon of prioritizedAddons) {
+          try {
+            // Extract base URL
+            const manifestUrlParts = addon.manifestUrl.split('/');
+            manifestUrlParts.pop();
+            const baseUrl = manifestUrlParts.join('/');
+            
+            // Check if this addon supports episodes
+            const metaUrl = `${baseUrl}/meta/${contentType}/${contentId}.json`;
+            const response = await fetch(metaUrl);
+            
+            if (response.ok) {
+              // This addon has metadata for this content, try to get seasons
+              const seasons = await fetchSeasons(baseUrl, contentType, contentId);
+              
+              if (seasons && seasons.length > 0) {
+                // Use the first season in the array if the selected season isn't in the available seasons
+                const seasonToFetch = seasons.includes(selectedSeason) ? selectedSeason : seasons[0];
+                await fetchEpisodes(baseUrl, contentType, contentId, seasonToFetch);
+              }
+              
+              return baseUrl;
+            }
+          } catch (err) {
+            console.warn(`Error checking addon ${addon.name} for episodes:`, err);
+          }
+        }
+        
+        return null;
+      };
+      
+      getAddonBaseUrl();
+    }
+  }, [details, selectedSeason, addonId, type, id, fetchEpisodes, fetchSeasons]);
   
   useEffect(() => {
     const fetchDetails = async () => {
@@ -361,8 +661,43 @@ export default function DetailsPage() {
   // At this point we should have details, even if it's partial
   if (!details) return null;
   
+  // Update this section to include the episodes we fetched
+  const hasSeasons = details.type === 'series' && (
+    (details.seasons && details.seasons.length > 0) || 
+    availableSeasons.length > 0
+  );
+  
+  const hasVideos = details.type === 'series' && details.videos && details.videos.length > 0;
+  
+  // Find episodes from details object and combine with fetched episodes
+  const currentSeason = details.seasons?.find(s => s.season === selectedSeason);
+  const episodesFromDetails = currentSeason?.episodes || [];
+  
+  // If we have directly fetched episodes for the current season, use those
+  const episodesToDisplay = episodes.length > 0 
+    ? episodes 
+    : episodesFromDetails.length > 0 
+      ? episodesFromDetails 
+      : hasVideos 
+        ? details.videos
+            ?.filter(v => v.season === selectedSeason)
+            .map(v => ({
+              id: v.id,
+              title: v.title,
+              season: v.season || 1,
+              episode: v.episode || 0
+            })) as Episode[]
+        : [];
+  
+  // Determine if we should show the episodes section
+  const showEpisodesSection = details.type === 'series' && (
+    hasSeasons || hasVideos || episodesToDisplay.length > 0 || availableSeasons.length > 0
+  );
+  
   return (
     <Box sx={{ 
+      display: 'flex',
+      flexDirection: 'column',
       minHeight: '100vh',
       backgroundColor: '#141414',
       color: 'white',
@@ -411,7 +746,10 @@ export default function DetailsPage() {
         position: 'relative', 
         zIndex: 1,
         pt: { xs: '35vh', md: '40vh' },
-        px: { xs: 3, md: 7.5 }
+        px: { xs: 3, md: 7.5 },
+        display: 'flex',
+        flexDirection: 'column',
+        flexGrow: 1
       }}>
         {/* Title or Logo */}
         {details.logo ? (
@@ -572,8 +910,157 @@ export default function DetailsPage() {
           )}
         </Box>
         
+        {/* Episodes Section - Only for series */}
+        {showEpisodesSection && (
+          <Box sx={{ width: '100%', mb: 8 }}>
+            <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+              <Typography variant="h4" component="h2" sx={{ fontWeight: 'bold' }}>
+                Episodes
+              </Typography>
+              
+              {availableSeasons.length > 1 && (
+                <FormControl 
+                  variant="outlined" 
+                  size="small" 
+                  sx={{ 
+                    minWidth: 120, 
+                    '.MuiOutlinedInput-root': {
+                      color: 'white',
+                      borderColor: 'grey.700',
+                      backgroundColor: 'rgba(0,0,0,0.3)',
+                    }
+                  }}
+                >
+                  <Select
+                    value={selectedSeason}
+                    onChange={(e) => setSelectedSeason(Number(e.target.value))}
+                    sx={{ 
+                      color: 'white',
+                      '.MuiOutlinedInput-notchedOutline': { borderColor: 'grey.700' },
+                      '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'grey.400' },
+                      '.MuiSvgIcon-root': { color: 'white' } 
+                    }}
+                  >
+                    {availableSeasons.map(season => (
+                      <MenuItem key={season} value={season}>
+                        Season {season}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )}
+            </Box>
+            
+            <Divider sx={{ borderColor: 'grey.800', mb: 2 }} />
+            
+            {loadingEpisodes ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                <CircularProgress color="inherit" size={32} />
+              </Box>
+            ) : episodesToDisplay.length > 0 ? (
+              <Box>
+                {episodesToDisplay.map((episode) => (
+                  <Box 
+                    key={episode.id} 
+                    sx={{ 
+                      display: 'flex', 
+                      mb: 3, 
+                      py: 2, 
+                      borderRadius: '4px',
+                      '&:hover': { 
+                        backgroundColor: 'rgba(255,255,255,0.1)',
+                        cursor: 'pointer'
+                      } 
+                    }}
+                  >
+                    {/* Episode Number */}
+                    <Box sx={{ 
+                      fontSize: { xs: '1.5rem', md: '2rem' }, 
+                      fontWeight: 'bold', 
+                      color: 'grey.500',
+                      width: { xs: '40px', md: '60px' },
+                      textAlign: 'center',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      {episode.episode}
+                    </Box>
+                    
+                    {/* Thumbnail */}
+                    {episode.thumbnail && (
+                      <Box sx={{ 
+                        width: { xs: '120px', sm: '160px', md: '220px' },
+                        height: { xs: '68px', sm: '90px', md: '124px' },
+                        borderRadius: '4px',
+                        overflow: 'hidden',
+                        position: 'relative',
+                        mr: 2,
+                        '&:hover': {
+                          '& .play-icon': {
+                            opacity: 1
+                          }
+                        }
+                      }}>
+                        <Image
+                          src={episode.thumbnail}
+                          alt={`Episode ${episode.episode}`}
+                          layout="fill"
+                          objectFit="cover"
+                        />
+                        <Box className="play-icon" sx={{ 
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: 'rgba(0,0,0,0.6)',
+                          opacity: 0,
+                          transition: 'opacity 0.2s'
+                        }}>
+                          <PlayArrow sx={{ fontSize: '3rem' }} />
+                        </Box>
+                      </Box>
+                    )}
+                    
+                    {/* Episode Info */}
+                    <Box sx={{ flexGrow: 1 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography variant="body1" component="h3" sx={{ fontWeight: 'bold' }}>
+                          {episode.title || `Episode ${episode.episode}`}
+                        </Typography>
+                        {episode.runtime && (
+                          <Typography variant="body2" sx={{ color: 'grey.400' }}>
+                            {episode.runtime}
+                          </Typography>
+                        )}
+                      </Box>
+                      {episode.overview && (
+                        <Typography variant="body2" color="grey.300">
+                          {episode.overview}
+                        </Typography>
+                      )}
+                    </Box>
+                  </Box>
+                ))}
+              </Box>
+            ) : (
+              <Typography variant="body2" sx={{ color: 'grey.400', fontStyle: 'italic' }}>
+                {episodesError || 'No episode information available for this season'}
+              </Typography>
+            )}
+          </Box>
+        )}
+        
         {/* More Like This section */}
-        <Box sx={{ mb: 8 }}>
+        <Box sx={{ 
+          mb: 8,
+          mt: 'auto',
+          pt: 5
+        }}>
           <Typography variant="h5" component="h2" sx={{ mb: 3, fontWeight: 'bold' }}>
             More Like This
           </Typography>
