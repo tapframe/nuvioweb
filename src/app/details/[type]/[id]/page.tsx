@@ -17,6 +17,8 @@ import MenuItem from '@mui/material/MenuItem';
 import FormControl from '@mui/material/FormControl';
 import Divider from '@mui/material/Divider';
 import StreamDialog from '../../../../components/StreamDialog';
+import VideocamIcon from '@mui/icons-material/Videocam';
+import EpisodeItem from './EpisodeItem';
 
 interface MetaDetails {
   id: string;
@@ -1005,92 +1007,11 @@ export default function DetailsPage() {
             ) : episodesToDisplay.length > 0 ? (
               <Box>
                 {episodesToDisplay.map((episode) => (
-                  <Box 
+                  <EpisodeItem 
                     key={episode.id} 
-                    onClick={() => handleEpisodeClick(episode)}
-                    sx={{ 
-                      display: 'flex', 
-                      mb: 3, 
-                      py: 2, 
-                      borderRadius: '4px',
-                      '&:hover': { 
-                        backgroundColor: 'rgba(255,255,255,0.1)',
-                        cursor: 'pointer'
-                      } 
-                    }}
-                  >
-                    {/* Episode Number */}
-                    <Box sx={{ 
-                      fontSize: { xs: '1.5rem', md: '2rem' }, 
-                      fontWeight: 'bold', 
-                      color: 'grey.500',
-                      width: { xs: '40px', md: '60px' },
-                      textAlign: 'center',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}>
-                      {episode.episode}
-                    </Box>
-                    
-                    {/* Thumbnail */}
-                    {episode.thumbnail && (
-                      <Box sx={{ 
-                        width: { xs: '120px', sm: '160px', md: '220px' },
-                        height: { xs: '68px', sm: '90px', md: '124px' },
-                        borderRadius: '4px',
-                        overflow: 'hidden',
-                        position: 'relative',
-                        mr: 2,
-                        '&:hover': {
-                          '& .play-icon': {
-                            opacity: 1
-                          }
-                        }
-                      }}>
-                        <Image
-                          src={episode.thumbnail}
-                          alt={`Episode ${episode.episode}`}
-                          layout="fill"
-                          objectFit="cover"
-                        />
-                        <Box className="play-icon" sx={{ 
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          backgroundColor: 'rgba(0,0,0,0.6)',
-                          opacity: 0,
-                          transition: 'opacity 0.2s'
-                        }}>
-                          <PlayArrow sx={{ fontSize: '3rem' }} />
-                        </Box>
-                      </Box>
-                    )}
-                    
-                    {/* Episode Info */}
-                    <Box sx={{ flexGrow: 1 }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                        <Typography variant="body1" component="h3" sx={{ fontWeight: 'bold' }}>
-                          {episode.title || `Episode ${episode.episode}`}
-                        </Typography>
-                        {episode.runtime && (
-                          <Typography variant="body2" sx={{ color: 'grey.400' }}>
-                            {episode.runtime}
-                          </Typography>
-                        )}
-                      </Box>
-                      {episode.overview && (
-                        <Typography variant="body2" color="grey.300">
-                          {episode.overview}
-                        </Typography>
-                      )}
-                    </Box>
-                  </Box>
+                    episode={episode} 
+                    onClick={() => handleEpisodeClick(episode)} 
+                  />
                 ))}
               </Box>
             ) : (
