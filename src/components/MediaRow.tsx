@@ -3,15 +3,12 @@
 import React from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-// import Image from 'next/image'; // No longer needed here
-import MediaItemCard from './MediaItemCard'; // Import the new component
+import Image from 'next/image';
 
-// Update interface reference if needed, ensuring it matches page.tsx
 interface MediaItem {
   id: string | number;
-  imageUrl: string; 
+  imageUrl: string;
   alt: string;
-  landscapeImageUrl?: string; 
 }
 
 interface MediaRowProps {
@@ -58,19 +55,42 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items }) => {
         sx={{
           display: 'flex',
           overflowX: 'auto',
-          gap: 2, // Slightly reduced gap for potentially wider items
+          gap: 2.5,
           pb: 2, // Padding at the bottom for scrollbar room
           // Hide scrollbar visually but keep functionality
           '&::-webkit-scrollbar': {
             display: 'none',
           },
-          msOverflowStyle: 'none', 
-          scrollbarWidth: 'none', 
+          msOverflowStyle: 'none',  // Changed to camelCase
+          scrollbarWidth: 'none',  // Changed to camelCase
         }}
       >
         {items.map((item) => (
-          // Use the new MediaItemCard component
-          <MediaItemCard key={item.id} item={item} />
+          <Box 
+            key={item.id} 
+            sx={{
+              position: 'relative',
+              minWidth: { xs: '140px', sm: '170px', md: '200px' },
+              aspectRatio: '2 / 3',
+              borderRadius: '6px',
+              overflow: 'hidden',
+              backgroundColor: 'grey.800', // Placeholder bg
+              transition: 'transform 0.3s ease',
+              '&:hover': {
+                transform: 'scale(1.05)',
+                cursor: 'pointer',
+                // Consider adding hover effects here
+              }
+            }}
+          >
+            <Image
+              src={item.imageUrl}
+              alt={item.alt}
+              layout="fill"
+              objectFit="cover"
+            />
+            {/* Add overlay or other info on hover if needed */}
+          </Box>
         ))}
       </Box>
     </Box>
