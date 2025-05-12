@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -16,6 +16,7 @@ import Select from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
 import FormControl from '@mui/material/FormControl';
 import Divider from '@mui/material/Divider';
+import StreamDialog from '../../../../components/StreamDialog';
 
 interface MetaDetails {
   id: string;
@@ -66,9 +67,16 @@ interface Season {
   episodes: Episode[];
 }
 
+// State for the stream dialog target
+interface StreamTarget {
+  season?: number | null;
+  episode?: number | null;
+}
+
 export default function DetailsPage() {
   const params = useParams();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { type, id } = params;
   const addonId = searchParams.get('addonId');
   
@@ -82,6 +90,10 @@ export default function DetailsPage() {
   const [loadingEpisodes, setLoadingEpisodes] = useState<boolean>(false);
   const [episodesError, setEpisodesError] = useState<string | null>(null);
   const [availableSeasons, setAvailableSeasons] = useState<number[]>([]);
+  
+  // State for Stream Dialog
+  const [isStreamDialogOpen, setIsStreamDialogOpen] = useState(false);
+  const [streamTarget, setStreamTarget] = useState<StreamTarget | null>(null);
   
   // Helper function to check if an object has minimal required properties
   const hasMinimalProperties = (obj: any): boolean => {
@@ -529,6 +541,33 @@ export default function DetailsPage() {
     fetchDetails();
   }, [type, id, addonId]);
   
+  // Function to open the stream dialog
+  const openStreamDialog = (target: StreamTarget) => {
+    setStreamTarget(target);
+    setIsStreamDialogOpen(true);
+  };
+  
+  // Handle click on the main Play button
+  const handlePlayClick = () => {
+    if (!details) return;
+    
+    if (details.type === 'series') {
+      // For series, play the first available episode (or just S1E1 if no data)
+      const firstSeason = availableSeasons.length > 0 ? availableSeasons[0] : 1;
+      const firstEpisode = episodes.length > 0 ? episodes[0].episode : 1;
+      openStreamDialog({ season: firstSeason, episode: firstEpisode });
+    } else {
+      // For movies, open dialog without season/episode
+      openStreamDialog({});
+    }
+  };
+  
+  // Handle click on an episode - Opens the dialog
+  const handleEpisodeClick = (episode: Episode) => {
+    // Open the stream dialog with the specific season and episode
+    openStreamDialog({ season: episode.season, episode: episode.episode });
+  };
+  
   if (loading) {
     return (
       <Box sx={{ 
@@ -694,6 +733,11 @@ export default function DetailsPage() {
     hasSeasons || hasVideos || episodesToDisplay.length > 0 || availableSeasons.length > 0
   );
   
+  // Determine the info string for the dialog title
+  const dialogEpisodeInfo = streamTarget?.season && streamTarget?.episode 
+    ? `S${streamTarget.season} E${streamTarget.episode}` 
+    : '';
+
   return (
     <Box sx={{ 
       display: 'flex',
@@ -822,11 +866,12 @@ export default function DetailsPage() {
           )}
         </Box>
         
-        {/* Action buttons */}
+        {/* Action buttons - Update Play button */}
         <Box sx={{ display: 'flex', gap: 2, mb: 4, flexWrap: 'wrap' }}>
           <Button 
             variant="contained"
             startIcon={<PlayArrow />}
+            onClick={handlePlayClick}
             sx={{ 
               backgroundColor: 'white', 
               color: 'black',
@@ -910,7 +955,7 @@ export default function DetailsPage() {
           )}
         </Box>
         
-        {/* Episodes Section - Only for series */}
+        {/* Episodes Section - Update episode onClick */}
         {showEpisodesSection && (
           <Box sx={{ width: '100%', mb: 8 }}>
             <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
@@ -962,6 +1007,7 @@ export default function DetailsPage() {
                 {episodesToDisplay.map((episode) => (
                   <Box 
                     key={episode.id} 
+                    onClick={() => handleEpisodeClick(episode)}
                     sx={{ 
                       display: 'flex', 
                       mb: 3, 
@@ -1070,6 +1116,19 @@ export default function DetailsPage() {
           </Typography>
         </Box>
       </Box>
+      
+      {/* Render the Stream Dialog */}
+      <StreamDialog
+        open={isStreamDialogOpen}
+        onClose={() => setIsStreamDialogOpen(false)}
+        contentType={String(type)}
+        contentId={String(id)}
+        season={streamTarget?.season}
+        episode={streamTarget?.episode}
+        contentName={details?.name}
+        episodeInfo={dialogEpisodeInfo}
+        initialAddonId={addonId}
+      />
     </Box>
   );
 } 
