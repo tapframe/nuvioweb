@@ -48,9 +48,10 @@ interface MediaRowProps {
   addonId?: string; // Optional addon ID for tracking source
   disableBottomMargin?: boolean; // New prop
   imageType?: 'poster' | 'backdrop'; // New prop for image aspect ratio
+  disableNegativeTopMargin?: boolean; // New prop for search page
 }
 
-const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBottomMargin, imageType = 'poster' }) => {
+const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBottomMargin, imageType = 'poster', disableNegativeTopMargin }) => {
   const router = useRouter();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [showControls, setShowControls] = useState(false);
@@ -148,8 +149,8 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBotto
       sx={{ 
         mb: disableBottomMargin ? 0 : 4, 
         ml: { xs: 3, md: 7.5 },
-        position: 'relative', // For positioning scroll buttons
-        mt: { xs: -3, md: -5 }, 
+        position: 'relative',
+        mt: disableNegativeTopMargin ? { xs: 1, md: 2 } : { xs: -3, md: -5 }, // Conditional top margin
         zIndex: 5 
       }}
       onMouseEnter={() => setShowControls(true)}
