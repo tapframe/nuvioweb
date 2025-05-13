@@ -52,6 +52,10 @@ interface MediaItem {
   imageUrl: string;
   alt: string;
   type: 'movie' | 'series'; // Standardized type
+  source: 'addon' | 'tmdb'; // Distinguish item origin
+  _tmdbRawBackdropPath?: string | null; // For TMDB item fallback
+  _tmdbRawPosterPath?: string | null;   // For TMDB item fallback
+  isLoading?: boolean;    // Flag to indicate if the item is in loading state
 }
 
 interface HomepageCatalogRow {
@@ -88,7 +92,12 @@ export default function HomePage() {
 
   // --- TMDB Data Fetching Functions --- 
   const fetchTmdbData = async (endpoint: string, apiKey: string): Promise<TmdbItem[]> => {
-    const url = `https://api.themoviedb.org/3${endpoint}?api_key=${apiKey}&language=en-US&page=1`;
+    let url = `https://api.themoviedb.org/3${endpoint}`;
+    if (endpoint.includes('?')) {
+      url += `&api_key=${apiKey}&language=en-US&page=1`;
+    } else {
+      url += `?api_key=${apiKey}&language=en-US&page=1`;
+    }
     console.log(`HomePage (TMDB): Fetching ${url}`);
     const response = await fetch(url);
     if (!response.ok) {
@@ -183,16 +192,17 @@ export default function HomePage() {
         return null; // Cannot determine type
     }
 
-    // Prefer backdrop_path for horizontal rows, but fall back to poster_path if needed
-    const imageUrl = item.backdrop_path 
-      ? `${TMDB_IMAGE_BASE_URL}original${item.backdrop_path}` 
-      : (item.poster_path ? `${TMDB_IMAGE_BASE_URL}w500${item.poster_path}` : '');
-
+    // For TMDB items, imageUrl is initially empty as it will be populated by enhanceRowBackdrops
+    // Store original paths for fallback.
     return {
       id: `tmdb:${item.id}`, // Prefix TMDB IDs to avoid collision with Stremio IDs
-      imageUrl: imageUrl,
+      imageUrl: '', // Initially empty for TMDB items
       alt: item.title || item.name || 'TMDB Item',
       type: itemType,
+      source: 'tmdb',
+      _tmdbRawBackdropPath: item.backdrop_path,
+      _tmdbRawPosterPath: item.poster_path,
+      isLoading: true // TMDB items start in loading state
     };
   };
 
@@ -207,7 +217,12 @@ export default function HomePage() {
       { id: 'popular_movies', endpoint: '/movie/popular', title: 'Popular Movies', type: 'movie' as const },
       { id: 'top_rated_movies', endpoint: '/movie/top_rated', title: 'Top Rated Movies', type: 'movie' as const },
       { id: 'trending_tv_week', endpoint: '/trending/tv/week', title: 'Trending TV Shows', type: 'series' as const },
-      { id: 'popular_tv', endpoint: '/tv/popular', title: 'Popular TV Shows', type: 'series' as const },
+      {
+        id: 'popular_tv',
+        endpoint: '/discover/tv?include_adult=false&sort_by=popularity.desc&without_genres=10767',
+        title: 'Popular TV Shows',
+        type: 'series' as const
+      },
       { id: 'top_rated_tv', endpoint: '/tv/top_rated', title: 'Top Rated TV Shows', type: 'series' as const },
     ];
 
@@ -241,75 +256,97 @@ export default function HomePage() {
       
       // Simple sort for TMDB rows, can be customized
       fetchedTmdbRows.sort((a,b) => a.title.localeCompare(b.title));
-      setHomepageCatalogs(fetchedTmdbRows);
+      setHomepageCatalogs(fetchedTmdbRows); // Initial render with empty imageURLs for TMDB items
 
-      // Process each row for enhanced backdrops sequentially to avoid overloading
-      // This happens after the initial rows are displayed, providing a progressive enhancement
-      const enhanceRowBackdrops = async () => {
-        for (const row of fetchedTmdbRows) {
-          if (row.source !== 'tmdb') continue; // Only process TMDB rows
+      // New function to process enhancement of all TMDB rows concurrently
+      const enhanceTmdbRowsConcurrently = async (initialRows: HomepageCatalogRow[], apiKeyToUse: string) => {
+        const rowEnhancementPromises = initialRows.map(async (row) => {
+          if (row.source !== 'tmdb') {
+            return row; // Pass through non-TMDB rows
+          }
 
-          const enhancedItems = [...row.items];
-          let updatedCount = 0;
+          const itemsToEnhanceInRow = [...row.items]; // Work on a copy for this specific row
           
-          // Process in small batches to avoid rate limiting
           const BATCH_SIZE = 3;
-          for (let i = 0; i < row.items.length; i += BATCH_SIZE) {
-            const batch = row.items.slice(i, i + BATCH_SIZE);
-            const batchPromises = batch.map(async (item, batchIndex) => {
+          for (let i = 0; i < itemsToEnhanceInRow.length; i += BATCH_SIZE) {
+            const batch = itemsToEnhanceInRow.slice(i, i + BATCH_SIZE);
+            
+            const itemDetailPromises = batch.map(async (item) => {
+              // Find the item's current index in itemsToEnhanceInRow to ensure updates apply to the correct object
+              // This is important because 'item' here is from the 'batch' slice.
+              const originalItemIndex = itemsToEnhanceInRow.findIndex(it => it.id === item.id);
+
+              if (item.source !== 'tmdb' || !item.id.startsWith('tmdb:')) return; // Should already be filtered by row.source
+
               try {
-                // Extract numeric TMDB ID
                 const tmdbId = parseInt(item.id.replace('tmdb:', ''));
                 if (isNaN(tmdbId)) return;
-                
-                // Determine if movie or TV
+
                 const mediaType = item.type === 'movie' ? 'movie' : 'tv';
+                const betterBackdropUrl = await fetchTmdbItemBackdrop(mediaType, tmdbId, apiKeyToUse);
+
+                let finalImageUrl = '';
+                if (betterBackdropUrl) {
+                  finalImageUrl = betterBackdropUrl;
+                } else {
+                  if (item._tmdbRawBackdropPath) {
+                    finalImageUrl = `${TMDB_IMAGE_BASE_URL}original${item._tmdbRawBackdropPath}`;
+                  } else if (item._tmdbRawPosterPath) {
+                    finalImageUrl = `${TMDB_IMAGE_BASE_URL}w500${item._tmdbRawPosterPath}`;
+                  }
+                }
                 
-                // Get high-quality backdrop
-                const betterBackdrop = await fetchTmdbItemBackdrop(mediaType, tmdbId, apiKey);
-                if (betterBackdrop) {
-                  enhancedItems[i + batchIndex] = {
-                    ...item,
-                    imageUrl: betterBackdrop
+                // Update the item in the itemsToEnhanceInRow array for this current row
+                if (originalItemIndex !== -1 && itemsToEnhanceInRow[originalItemIndex].imageUrl !== finalImageUrl) {
+                  itemsToEnhanceInRow[originalItemIndex] = {
+                    ...itemsToEnhanceInRow[originalItemIndex],
+                    imageUrl: finalImageUrl,
+                    isLoading: false // No longer loading once we have a URL
                   };
-                  updatedCount++;
                 }
               } catch (error) {
-                console.warn(`Error enhancing backdrop for ${item.id}:`, error);
+                console.warn(`Error enhancing backdrop for ${item.id} in row ${row.title}:`, error);
+                const currentItemToFallback = itemsToEnhanceInRow[originalItemIndex];
+                if (originalItemIndex !== -1 && currentItemToFallback) {
+                    let fallbackImageUrlOnError = '';
+                    if (currentItemToFallback._tmdbRawBackdropPath) {
+                        fallbackImageUrlOnError = `${TMDB_IMAGE_BASE_URL}original${currentItemToFallback._tmdbRawBackdropPath}`;
+                    } else if (currentItemToFallback._tmdbRawPosterPath) {
+                        fallbackImageUrlOnError = `${TMDB_IMAGE_BASE_URL}w500${currentItemToFallback._tmdbRawPosterPath}`;
+                    }
+                    if (itemsToEnhanceInRow[originalItemIndex].imageUrl !== fallbackImageUrlOnError) {
+                       itemsToEnhanceInRow[originalItemIndex] = { 
+                         ...itemsToEnhanceInRow[originalItemIndex], 
+                         imageUrl: fallbackImageUrlOnError,
+                         isLoading: false // No longer loading even with fallback
+                       };
+                    }
+                }
               }
             });
             
-            await Promise.all(batchPromises);
+            await Promise.allSettled(itemDetailPromises); // Wait for all items in this batch to be processed
             
-            // If we made updates in this batch, update the state
-            if (updatedCount > 0) {
-              // Update the state with the enhanced items we have so far
-              setHomepageCatalogs(prevCatalogs => {
-                return prevCatalogs.map(prevRow => {
-                  if (prevRow.id === row.id) {
-                    return {
-                      ...prevRow,
-                      items: enhancedItems
-                    };
-                  }
-                  return prevRow;
-                });
-              });
-              
-              // Reset counter for next batch
-              updatedCount = 0;
+            // Add a small delay after each batch for this row to avoid overwhelming the API too quickly
+            // Only add delay if there are more batches to come for this row
+            if (i + BATCH_SIZE < itemsToEnhanceInRow.length) {
+                await new Promise(resolve => setTimeout(resolve, 200));
             }
-            
-            // Add a small delay to avoid overwhelming the API
-            await new Promise(resolve => setTimeout(resolve, 200));
           }
-        }
+          return { ...row, items: itemsToEnhanceInRow }; // Return the row with its items enhanced
+        });
+
+        const allEnhancedOrOriginalRows = await Promise.all(rowEnhancementPromises);
+        setHomepageCatalogs(allEnhancedOrOriginalRows); // Single state update with all images populated
       };
       
-      // Start the enhancement process after initial render
-      enhanceRowBackdrops().catch(error => {
-        console.error("Error enhancing backdrops:", error);
-      });
+      // Start the enhancement process if there are TMDB rows
+      if (fetchedTmdbRows.some(r => r.source === 'tmdb')) {
+        enhanceTmdbRowsConcurrently(fetchedTmdbRows, apiKey).catch(error => {
+          console.error("HomePage (TMDB): Error during concurrent enhancement of TMDB rows:", error);
+          // Potentially set an error state or revert to initial rows if needed
+        });
+      }
 
       if (fetchedTmdbRows.length === 0) {
         setPageError("Could not load any content from TMDB. The API might be temporarily unavailable or there's no content for these categories.");
@@ -379,7 +416,9 @@ export default function HomePage() {
                       id: meta.id!,
                       imageUrl: meta.poster!,
                       alt: meta.name || meta.id!,
-                      type: meta.type as 'movie' | 'series' // Assuming type is 'movie' or 'series'
+                      type: meta.type as 'movie' | 'series', // Assuming type is 'movie' or 'series'
+                      source: 'addon', // Add source for Stremio/addon items
+                      isLoading: false // Stremio items start with imageUrl ready
                     }));
                   if (items.length > 0) {
                     allFetchedStremioRows.push({ 
