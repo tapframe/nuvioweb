@@ -67,7 +67,7 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBotto
   const getItemSx = (): SxProps<Theme> => {
     const baseStyles: SxProps<Theme> = {
       position: 'relative',
-      borderRadius: '6px',
+      borderRadius: '2px',
       overflow: 'hidden',
       backgroundColor: 'grey.800',
       transition: 'transform 0.3s ease, box-shadow 0.3s ease',
@@ -130,7 +130,7 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBotto
         sx={{
           display: 'flex',
           overflowX: 'auto',
-          gap: 2.5,
+          gap: 1, // Reduced from 2.5 to 1 to decrease space between items
           pb: 2, // Padding at the bottom for scrollbar room
           pt: 1, // Add some padding top to allow for scale effect without cutting off top
           perspective: '1000px', // For 3D hover effect if desired
