@@ -25,6 +25,7 @@ import { TransitionProps } from '@mui/material/transitions';
 import Zoom from '@mui/material/Zoom';
 import Slide from '@mui/material/Slide';
 import { useAddonContext } from '@/context/AddonContext';
+import { useTmdbContext } from '@/context/TmdbContext';
 import { Chip, Paper } from '@mui/material';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
@@ -107,23 +108,189 @@ function hasMinimalProperties(obj: any): obj is Meta {
 // Helper function to enhance image URLs
 const getEnhancedImageUrl = (url: string | undefined): string => {
   if (!url) return ''; // Empty string fallback instead of undefined
-  
-  // Convert metahub background URLs from medium to large
-  if (url.includes('images.metahub.space/background/medium/')) {
-    return url.replace('/background/medium/', '/background/large/');
+
+  // Check if it's a Metahub URL before attempting replacements
+  if (url.startsWith('https://images.metahub.space/') || url.startsWith('http://images.metahub.space/')) {
+    // If the path segment looks like an IMDb ID (e.g., /tt1234567/), don't modify it,
+    // as the enhancement logic is for standard paths, not direct ID links.
+    // This is a basic check; more robust IMDb ID detection could be added if needed.
+    const pathPart = url.substring(url.indexOf('.space/') + 7);
+    if (/^tt\d{7,}/.test(pathPart)) {
+      console.log(`getEnhancedImageUrl: Detected IMDb ID in Metahub URL, returning original: ${url}`);
+      return url; 
+    }
+    
+    // Convert metahub background URLs from medium to large
+    if (url.includes('/background/medium/')) {
+      return url.replace('/background/medium/', '/background/large/');
+    }
+    
+    // Convert metahub poster URLs from medium to large if needed
+    if (url.includes('/poster/medium/')) {
+      return url.replace('/poster/medium/', '/poster/large/');
+    }
+    
+    // Convert metahub logo URLs from medium to large if needed
+    if (url.includes('/logo/medium/')) {
+      return url.replace('/logo/medium/', '/logo/large/');
+    }
   }
   
-  // Convert metahub poster URLs from medium to large if needed
-  if (url.includes('images.metahub.space/poster/medium/')) {
-    return url.replace('/poster/medium/', '/poster/large/');
-  }
-  
-  // Convert metahub logo URLs from medium to large if needed
-  if (url.includes('images.metahub.space/logo/medium/')) {
-    return url.replace('/logo/medium/', '/logo/large/');
-  }
-  
+  // For other URLs (including direct TMDB image URLs or non-Metahub URLs),
+  // or Metahub URLs that weren't modified above, return them as is.
   return url;
+};
+
+// --- Helper function to fetch data from TMDB ---
+const fetchTmdbData = async (path: string, apiKey: string, params?: Record<string, string>) => {
+  let queryString = `api_key=${apiKey}`;
+  if (params) {
+    queryString += `&${new URLSearchParams(params).toString()}`;
+  }
+  const url = `https://api.themoviedb.org/3${path}?${queryString}`;
+  console.log(`Fetching TMDB data from: ${url}`);
+  const response = await fetch(url);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({})); // Try to parse error, default to empty obj
+    throw new Error(
+      `TMDB API error ${response.status}: ${response.statusText}. ` +
+      `${errorData?.status_message || 'No additional error message from TMDB.'}`
+    );
+  }
+  return response.json();
+};
+
+// --- Helper function to transform TMDB API response to our Meta interface ---
+const transformTmdbDetailsToMeta = (mainData: any, imageData: any, type: string, originalId: string): Meta => {
+  const getYear = (dateString?: string): number | undefined => {
+    if (!dateString) return undefined;
+    return parseInt(dateString.substring(0, 4), 10);
+  };
+
+  // Use /original path as suggested for best quality
+  const getImageUrl = (path?: string) => path ? `https://image.tmdb.org/t/p/original${path}` : undefined;
+  
+  // --- Extract images prioritizing imageData --- 
+  console.log("transformTmdbDetailsToMeta: imageData:", imageData);
+  console.log("transformTmdbDetailsToMeta: mainData:", mainData); 
+  
+  // Logo
+  let logoPath: string | undefined = undefined;
+  if (imageData?.logos?.length > 0) {
+    const englishLogo = imageData.logos.find((logo: any) => logo.iso_639_1 === 'en');
+    logoPath = englishLogo?.file_path || imageData.logos[0]?.file_path;
+    console.log("transformTmdbDetailsToMeta: Found logoPath in imageData:", logoPath);
+  } else {
+    console.log("transformTmdbDetailsToMeta: No logos found in imageData");
+    // No fallback for logo from mainData unless we revert to append_to_response=images
+  }
+  const finalLogoUrl = getImageUrl(logoPath);
+  console.log("transformTmdbDetailsToMeta: Final constructed logo URL:", finalLogoUrl);
+  
+  // Backdrop
+  let backdropPath: string | undefined = undefined;
+  if (imageData?.backdrops?.length > 0) {
+      // Prioritize English backdrop, then first, fallback to mainData.backdrop_path
+      const englishBackdrop = imageData.backdrops.find((bd: any) => bd.iso_639_1 === 'en');
+      backdropPath = englishBackdrop?.file_path || imageData.backdrops[0]?.file_path;
+       console.log("transformTmdbDetailsToMeta: Found backdropPath in imageData:", backdropPath);
+  } else {
+      console.log("transformTmdbDetailsToMeta: No backdrops found in imageData, checking mainData...");
+      backdropPath = mainData?.backdrop_path;
+      if (backdropPath) console.log("transformTmdbDetailsToMeta: Found backdropPath in mainData:", backdropPath);
+      else console.log("transformTmdbDetailsToMeta: No backdropPath found in mainData either.");
+  }
+  const finalBackdropUrl = getImageUrl(backdropPath);
+  console.log("transformTmdbDetailsToMeta: Final constructed backdrop URL:", finalBackdropUrl);
+
+  // Poster
+  let posterPath: string | undefined = undefined;
+  if (imageData?.posters?.length > 0) {
+       // Prioritize English poster, then first, fallback to mainData.poster_path
+      const englishPoster = imageData.posters.find((p: any) => p.iso_639_1 === 'en');
+      posterPath = englishPoster?.file_path || imageData.posters[0]?.file_path;
+      console.log("transformTmdbDetailsToMeta: Found posterPath in imageData:", posterPath);
+  } else {
+      console.log("transformTmdbDetailsToMeta: No posters found in imageData, checking mainData...");
+      posterPath = mainData?.poster_path;
+      if (posterPath) console.log("transformTmdbDetailsToMeta: Found posterPath in mainData:", posterPath);
+      else console.log("transformTmdbDetailsToMeta: No posterPath found in mainData either.");
+  }
+  const finalPosterUrl = getImageUrl(posterPath);
+   console.log("transformTmdbDetailsToMeta: Final constructed poster URL:", finalPosterUrl);
+  // --- End Image Extraction ---
+
+  let director: string | undefined = undefined;
+  if (mainData.credits?.crew?.length > 0) {
+    const directorEntry = mainData.credits.crew.find((person: any) => person.job === 'Director');
+    if (directorEntry) director = directorEntry.name;
+  }
+
+  const cast = mainData.credits?.cast?.slice(0, 15).map((actor: any) => actor.name) || [];
+
+  let trailerUrl: string | undefined = undefined;
+  if (mainData.videos?.results?.length > 0) {
+    const officialTrailer = mainData.videos.results.find(
+        (video: any) => video.type === 'Trailer' && video.official && video.site === 'YouTube'
+    );
+    if (officialTrailer) {
+        trailerUrl = `https://www.youtube.com/watch?v=${officialTrailer.key}`;
+    } else {
+        const anyTrailer = mainData.videos.results.find((video: any) => video.type === 'Trailer' && video.site === 'YouTube');
+        if (anyTrailer) trailerUrl = `https://www.youtube.com/watch?v=${anyTrailer.key}`;
+    }
+  }
+  
+  let certification: string | undefined = undefined;
+  // Certification logic uses specific fields that are usually part of main details, not images endpoint
+  if (type === 'movie' && mainData.release_dates?.results) {
+    const usRelease = mainData.release_dates.results.find((r: any) => r.iso_3166_1 === 'US');
+    if (usRelease?.release_dates?.length > 0) {
+      certification = usRelease.release_dates.find((rd: any) => rd.certification !== "")?.certification;
+    }
+  } else if (type === 'series' && mainData.content_ratings?.results) {
+    const usRating = mainData.content_ratings.results.find((r: any) => r.iso_3166_1 === 'US');
+    certification = usRating?.rating;
+  }
+
+  const releaseDate = mainData.release_date || mainData.first_air_date;
+
+  return {
+    id: originalId, 
+    type: type, 
+    name: mainData.title || mainData.name || 'Untitled',
+    poster: finalPosterUrl,
+    background: finalBackdropUrl,
+    logo: finalLogoUrl,
+    description: mainData.overview || 'No description available.',
+    releaseInfo: releaseDate ? releaseDate.substring(0, 4) : 'N/A', 
+    year: getYear(releaseDate),
+    runtime: mainData.runtime 
+      ? `${mainData.runtime} min` 
+      : (mainData.episode_run_time?.[0] ? `${mainData.episode_run_time[0]} min/ep` : undefined),
+    genres: mainData.genres?.map((g: any) => g.name) || [],
+    director: director ? [director] : undefined, 
+    cast: cast,
+    imdbRating: mainData.vote_average ? mainData.vote_average.toFixed(1) : undefined,
+    country: mainData.production_countries?.map((c: any) => c.name) || [],
+    language: mainData.spoken_languages?.map((l: any) => l.english_name) || [],
+    certification: certification,
+    trailer: trailerUrl,
+  };
+};
+
+// --- Helper function to transform TMDB Episode data to our Episode interface ---
+const transformTmdbEpisodeToLocalFormat = (tmdbEpisode: any, seriesTmdbId: string): Episode => {
+  return {
+    id: `tmdb:${seriesTmdbId}-s${tmdbEpisode.season_number}-e${tmdbEpisode.episode_number}`, // Unique ID
+    title: tmdbEpisode.name || `Episode ${tmdbEpisode.episode_number}`,
+    overview: tmdbEpisode.overview || '',
+    thumbnail: tmdbEpisode.still_path ? `https://image.tmdb.org/t/p/w300${tmdbEpisode.still_path}` : '', // w300 for stills
+    season: tmdbEpisode.season_number,
+    episode: tmdbEpisode.episode_number,
+    released: tmdbEpisode.air_date || '',
+    runtime: tmdbEpisode.runtime ? `${tmdbEpisode.runtime} min` : ''
+  };
 };
 
 interface Meta {
@@ -136,7 +303,8 @@ interface Meta {
     director?: string | string[];
     cast?: string[];
     runtime?: string;
-    releaseInfo?: string; // Year
+    releaseInfo?: string; // Year string
+    year?: number; // Numeric year
     imdbRating?: string;
     genres?: string[];
     logo?: string;
@@ -153,7 +321,7 @@ export default function DetailsPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { type: routeType, id } = params;
+  const { type: routeType, id: rawId } = params;
   const sourceAddonId = searchParams.get('addonId');
   const { 
     installedAddons, 
@@ -161,7 +329,11 @@ export default function DetailsPage() {
     error: addonContextError,
     getAddonById // Get the function from context
   } = useAddonContext(); // Use context
+  const { tmdbApiKey, isTmdbEnabled } = useTmdbContext(); // Get TMDB context values
   
+  // Decode the ID parameter
+  const id = typeof rawId === 'string' ? decodeURIComponent(rawId) : Array.isArray(rawId) ? decodeURIComponent(rawId[0]) : '';
+
   // Type assertion/guard for route params
   const type = typeof routeType === 'string' ? routeType : '';
 
@@ -283,39 +455,104 @@ export default function DetailsPage() {
       return;
     }
     
-    // Wait for addons context to finish loading
+    // Wait for addons context to finish loading (TMDB context loads quickly/independently)
     if (isLoadingAddons) {
         setLoadingDetails(true); 
         return;
     }
 
-    // Handle case where no addons are installed (after context load finished)
-    if (!installedAddons || installedAddons.length === 0) {
-        setPageError("No addons installed to fetch details.");
-        setLoadingDetails(false);
-        return;
-    }
+    // --- Check for TMDB ID and settings ---
+    const isTmdbId = id.startsWith('tmdb:');
+    const canFetchTmdb = isTmdbId && isTmdbEnabled && !!tmdbApiKey;
 
-    // Reflect addon context errors
-    if (addonContextError) {
-        setPageError(`Addon Context Error: ${addonContextError}`);
-        // Optionally, still try to fetch if some addons might work?
-        // For now, we block fetching if the context itself had issues loading.
-        // setLoadingDetails(false); 
-        // return;
-    }
+    // --- Function to fetch and transform TMDB data ---
+    const fetchTmdbDetails = async () => {
+        setLoadingDetails(true);
+        setPageError(null);
+        setPartialMetadata(false);
+        setDetails(null);
+        
+        if (!tmdbApiKey) { // Double check just in case
+            setPageError("TMDB API Key is missing.");
+            setLoadingDetails(false);
+            return;
+        }
+        
+        if (typeof id !== 'string') {
+            setPageError("Invalid item ID format.");
+            setLoadingDetails(false);
+            return;
+        }
 
-    const fetchDetailsAndMaybeSeasons = async () => {
+        const numericId = id.substring(5); // Use decoded id
+        const tmdbType = type === 'series' ? 'tv' : 'movie';
+        const basePath = `/${tmdbType}/${numericId}`;
+        
+        const mainDetailsParams = {
+            append_to_response: `credits,videos,external_ids${tmdbType === 'tv' ? ',content_ratings' : ''}`,
+            language: 'en-US'
+        };
+        const imageParams = {
+            include_image_language: 'en,null' // Fetch English and imageless language entries
+        };
+
+        try {
+            console.log(`DetailsPage (TMDB): Fetching main details for ${basePath}`);
+            const mainData = await fetchTmdbData(basePath, tmdbApiKey, mainDetailsParams);
+            console.log(`DetailsPage (TMDB): Received main data:`, mainData);
+
+            console.log(`DetailsPage (TMDB): Fetching images for ${basePath}/images`);
+            let imageData: any = {}; // Initialize as empty object
+            try {
+                imageData = await fetchTmdbData(`${basePath}/images`, tmdbApiKey, imageParams);
+                console.log(`DetailsPage (TMDB): Received image data:`, imageData);
+            } catch (imgError: any) {
+                console.warn(`DetailsPage (TMDB): Could not fetch images from ${basePath}/images. Error: ${imgError.message}`);
+                // Proceed without imageData, transformation function will handle missing image data
+            }
+
+            const transformedDetails = transformTmdbDetailsToMeta(mainData, imageData, type, id as string);
+            
+            setDetails(transformedDetails);
+
+            // --- Handle TMDB Series Seasons (uses mainData) ---
+            if (tmdbType === 'tv' && mainData.seasons) {
+                const seasonNumbers = mainData.seasons
+                    .filter((s: any) => s.season_number !== 0) 
+                    .map((s: any) => s.season_number)
+                    .sort((a: number, b: number) => a - b);
+                console.log(`DetailsPage (TMDB): Found seasons:`, seasonNumbers);
+                setAvailableSeasons(seasonNumbers);
+                if (seasonNumbers.length > 0) {
+                    setSelectedSeason(seasonNumbers[0]); 
+                } else {
+                    setSelectedSeason(1); 
+                    setAvailableSeasons([1]);
+                }
+            } else {
+                 setAvailableSeasons([]);
+                 setEpisodes([]);
+            }
+
+        } catch (error: any) {
+            console.error(`DetailsPage (TMDB): Error fetching details:`, error);
+            setPageError(`Failed to load details from TMDB: ${error.message}`);
+            // Maybe fallback to Stremio here? For now, just show error.
+        } finally {
+            setLoadingDetails(false);
+        }
+    };
+    
+    // --- Function to fetch Stremio addon details (existing logic) ---
+    const fetchStremioDetails = async () => {
+      // --- Existing Stremio fetching logic starts here ---
       setLoadingDetails(true);
       setPageError(null); // Clear previous page-specific errors
       setPartialMetadata(false);
       setDetails(null);
-      // setStreams([]); // Streams are fetched later
 
       let fetchedDetails: Meta | null = null;
-      // let fetchedStreams: Stream[] = []; // Streams state managed separately
       let detailFetchError: string | null = null;
-      // let streamFetchError: string | null = null; // Streams error state managed separately
       let triedBasicMeta = false;
 
       // --- Prioritize Addons ---
@@ -349,6 +586,14 @@ export default function DetailsPage() {
             console.log(`DetailsPage: Skipping meta fetch for ${addon.name} (doesn't provide meta for type ${type})`);
             continue;
         }
+
+        // --- Add check for TMDB ID before querying Stremio addon ---
+        console.log(`DetailsPage: Checking ID value before skip: '${id}' (type: ${typeof id})`);
+        if (id.startsWith('tmdb:')) {
+            console.warn(`DetailsPage: Skipping meta fetch for ${addon.name} (${type}/${id}) because Stremio addons don't support 'tmdb:' prefixed IDs directly.`);
+            continue; // Skip this addon for this ID
+        }
+        // --- End check ---
 
         try {
           const manifestUrlParts = addon.manifestUrl.split('/');
@@ -448,10 +693,6 @@ export default function DetailsPage() {
           }
       }
 
-      // --- Streams are fetched separately now, typically via StreamDialog ---
-      // // 2. Fetch Streams (only if metadata was found)
-      // if (fetchedDetails) { ... stream fetching logic removed ... }
-
       // 3. Update State
       setDetails(fetchedDetails); // Set final details (could be full, partial, or basic)
       setPageError(detailFetchError); // Set page error only if detail fetching failed completely
@@ -485,44 +726,146 @@ export default function DetailsPage() {
       }
     };
 
-    fetchDetailsAndMaybeSeasons();
+    // --- Decide which fetch function to call ---
+    if (canFetchTmdb) {
+      console.log("DetailsPage: Detected TMDB ID and configuration, fetching from TMDB.");
+      fetchTmdbDetails();
+    } else {
+      console.log("DetailsPage: Not a TMDB ID or TMDB disabled/unconfigured, fetching from Stremio addons.");
+      // Handle case where no addons are installed (if not fetching TMDB)
+      if (!isLoadingAddons && (!installedAddons || installedAddons.length === 0)) {
+          setPageError("No addons installed to fetch details.");
+          setLoadingDetails(false);
+          return;
+      }
+       // Reflect addon context errors if not fetching TMDB
+      if (addonContextError) {
+          setPageError(`Addon Context Error: ${addonContextError}`);
+          // Optionally, still try to fetch if some addons might work?
+          // setLoadingDetails(false); // Decided earlier to proceed if possible
+      }
+      
+      fetchStremioDetails(); // Call the original Stremio fetching logic
+    }
 
     // Clean up function (optional)
     return () => {
         // Cancel any ongoing fetches if necessary
     };
 
-  }, [id, type, sourceAddonId, installedAddons, isLoadingAddons, addonContextError, getAddonById, fetchSeasons]); // Added fetchSeasons
+  }, [
+      id, // Now using the decoded id
+      type, 
+      sourceAddonId, 
+      installedAddons, 
+      isLoadingAddons, 
+      addonContextError, 
+      getAddonById, 
+      fetchSeasons, // Keep fetchSeasons for Stremio path
+      // Add TMDB dependencies
+      tmdbApiKey,
+      isTmdbEnabled 
+    ]); // Added TMDB context values to dependency array
 
   // --- useEffect to fetch EPISODES when season changes or details load ---
   useEffect(() => {
+    // --- Decide whether to fetch TMDB or Stremio episodes ---
+    const isTmdbId = details?.id?.startsWith('tmdb:'); // Check details.id
+    const canFetchTmdbEpisodes = isTmdbId && isTmdbEnabled && !!tmdbApiKey;
+
     if (details && details.type === 'series' && availableSeasons.length > 0) {
         // Ensure selectedSeason is valid
         const seasonToFetch = availableSeasons.includes(selectedSeason) ? selectedSeason : availableSeasons[0];
         if (selectedSeason !== seasonToFetch) {
             setSelectedSeason(seasonToFetch); // Correct the selected season if invalid
+            // Return early if season was corrected, the effect will re-run
+            return; 
         }
 
-        // Find addon base URL again (similar logic as above)
-        let addonUsedForDetails: any = null;
-        if (sourceAddonId) addonUsedForDetails = getAddonById(sourceAddonId);
-        if (!addonUsedForDetails) { 
-            addonUsedForDetails = installedAddons.find(a => a.id === details.id.split(':')[0]); // Try to guess from meta ID prefix
-            if (!addonUsedForDetails) addonUsedForDetails = installedAddons[0]; // Last resort
-        }
+        if (canFetchTmdbEpisodes) {
+            // --- Fetch TMDB Episodes ---
+            const fetchTmdbEpisodesInternal = async () => {
+                setLoadingEpisodes(true);
+                setEpisodesError(null);
+                setEpisodes([]);
 
-        if (addonUsedForDetails) {
-            const manifestUrlParts = addonUsedForDetails.manifestUrl.split('/');
-            manifestUrlParts.pop();
-            const baseUrl = manifestUrlParts.join('/');
-            console.log(`DetailsPage: Fetching episodes for S${seasonToFetch} using base URL from addon: ${addonUsedForDetails.name}`);
-            fetchEpisodes(baseUrl, details.type, details.id, seasonToFetch);
-        } else {
-            console.error("DetailsPage: Could not determine addon base URL to fetch episodes.");
-            setEpisodesError("Could not determine addon source for episodes.");
-        }
+                if (typeof details.id !== 'string' || !details.id.startsWith('tmdb:')) {
+                    console.error("DetailsPage (TMDB Episodes): Invalid or non-TMDB ID in details for episode fetching.");
+                    setEpisodesError("Cannot fetch episodes: Invalid item ID.");
+                    setLoadingEpisodes(false);
+                    return;
+                }
+                const numericId = details.id.substring(5);
+                const path = `/tv/${numericId}/season/${seasonToFetch}`;
+                const queryParams = { language: 'en-US' };
+                
+                try {
+                    console.log(`DetailsPage (TMDB Episodes): Fetching episodes for ${path} S${seasonToFetch}`);
+                    const seasonData = await fetchTmdbData(path, tmdbApiKey, queryParams);
+                    
+                    if (seasonData && Array.isArray(seasonData.episodes)) {
+                         // TODO: Implement transformTmdbEpisodeToLocalFormat
+                         const transformedEpisodes: Episode[] = seasonData.episodes.map((ep: any) => 
+                            transformTmdbEpisodeToLocalFormat(ep, numericId)
+                         );
+                         console.log(`DetailsPage (TMDB Episodes): Fetched ${transformedEpisodes.length} episodes for S${seasonToFetch}`);
+                         setEpisodes(transformedEpisodes);
+                         if (transformedEpisodes.length === 0) {
+                             setEpisodesError('No episode data found for this season on TMDB.');
+                         }
+                    } else {
+                         console.warn(`DetailsPage (TMDB Episodes): No episodes array found in response for S${seasonToFetch}`);
+                         setEpisodesError('No episode information available for this season.');
+                    }
+
+                } catch (err: any) {
+                     console.error(`DetailsPage (TMDB Episodes): Error fetching episodes for ${details.id} S${seasonToFetch}:`, err);
+                     setEpisodesError(err.message || 'Failed to load episodes for this season from TMDB');
+                } finally {
+                    setLoadingEpisodes(false);
+                }
+            };
+            fetchTmdbEpisodesInternal();
+
+        } else if (!isTmdbId) { 
+             // --- Fetch Stremio Episodes (Existing Logic) ---
+             // Find addon base URL again (similar logic as above)
+             let addonUsedForDetails: any = null;
+             if (sourceAddonId) addonUsedForDetails = getAddonById(sourceAddonId);
+             if (!addonUsedForDetails) { 
+                 addonUsedForDetails = installedAddons.find(a => a.id === details.id.split(':')[0]); // Try to guess from meta ID prefix
+                 if (!addonUsedForDetails) addonUsedForDetails = installedAddons[0]; // Last resort
+             }
+
+             if (addonUsedForDetails) {
+                 const manifestUrlParts = addonUsedForDetails.manifestUrl.split('/');
+                 manifestUrlParts.pop();
+                 const baseUrl = manifestUrlParts.join('/');
+                 console.log(`DetailsPage: Fetching episodes for S${seasonToFetch} using base URL from addon: ${addonUsedForDetails.name}`);
+                 fetchEpisodes(baseUrl, details.type, details.id, seasonToFetch);
+             } else {
+                 console.error("DetailsPage: Could not determine addon base URL to fetch episodes.");
+                 setEpisodesError("Could not determine addon source for episodes.");
+             }
+         } else {
+             console.warn("DetailsPage (Episodes): TMDB ID detected but cannot fetch (check API key/enabled status).");
+             setEpisodesError("Cannot fetch TMDB episodes (check configuration).");
+             setLoadingEpisodes(false);
+             setEpisodes([]);
+         }
     }
-  }, [details, selectedSeason, availableSeasons, installedAddons, sourceAddonId, getAddonById, fetchEpisodes]); // Dependencies
+  }, [
+      details, 
+      selectedSeason, 
+      availableSeasons, 
+      installedAddons, 
+      sourceAddonId, 
+      getAddonById, 
+      fetchEpisodes, // Keep for Stremio path
+      // Add TMDB dependencies
+      tmdbApiKey, 
+      isTmdbEnabled
+    ]); // Added TMDB deps
 
   // --- Other useEffects (Animation) ---
   useEffect(() => {
