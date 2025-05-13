@@ -99,8 +99,73 @@ export default function HomePage() {
     return data.results || [];
   };
 
+  // Function to fetch backdrops for a specific movie/TV item from the /images endpoint
+  const fetchTmdbItemBackdrop = async (itemType: 'movie' | 'tv', itemId: number, apiKey: string): Promise<string | null> => {
+    try {
+      const url = `https://api.themoviedb.org/3/${itemType}/${itemId}/images?api_key=${apiKey}&include_image_language=en,null`;
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        console.warn(`Failed to fetch images for ${itemType}/${itemId}: ${response.status}`);
+        return null;
+      }
+      
+      const data = await response.json();
+      
+      // Find the best backdrop - prioritize by language first (English), then quality
+      if (data?.backdrops && data.backdrops.length > 0) {
+        // First try to get English backdrops
+        const englishBackdrops = data.backdrops.filter(
+          (backdrop: any) => backdrop.iso_639_1 === 'en'
+        );
+        
+        // If English backdrops exist, sort and use them
+        if (englishBackdrops.length > 0) {
+          englishBackdrops.sort((a: any, b: any) => {
+            // Sort by vote_average first
+            if (a.vote_average !== undefined && b.vote_average !== undefined) {
+              return b.vote_average - a.vote_average;
+            }
+            // Then by vote_count
+            if (a.vote_count !== undefined && b.vote_count !== undefined) {
+              return b.vote_count - a.vote_count;
+            }
+            return 0;
+          });
+          
+          return `${TMDB_IMAGE_BASE_URL}original${englishBackdrops[0].file_path}`;
+        }
+        
+        // Fallback to any backdrops (including null language/language-neutral)
+        const sortedBackdrops = [...data.backdrops];
+        sortedBackdrops.sort((a, b) => {
+          // First try to sort by vote_average
+          if (a.vote_average !== undefined && b.vote_average !== undefined) {
+            return b.vote_average - a.vote_average;
+          }
+          // Then try to sort by vote_count
+          if (a.vote_count !== undefined && b.vote_count !== undefined) {
+            return b.vote_count - a.vote_count;
+          }
+          // Default to the order they came in
+          return 0;
+        });
+        
+        const bestBackdrop = sortedBackdrops[0];
+        // Use original size for the best quality
+        return `${TMDB_IMAGE_BASE_URL}original${bestBackdrop.file_path}`;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error(`Error fetching backdrop for ${itemType}/${itemId}:`, error);
+      return null;
+    }
+  };
+
   const transformTmdbItemToMediaItem = (item: TmdbItem, typeOverride?: 'movie' | 'series'): MediaItem | null => {
-    if (!item.poster_path) return null; // Skip items without posters
+    // We still check if backdrop_path exists as a minimum requirement
+    if (!item.backdrop_path && !item.poster_path) return null; // Skip items without any images
     
     let itemType: 'movie' | 'series';
     if (typeOverride) {
@@ -118,9 +183,14 @@ export default function HomePage() {
         return null; // Cannot determine type
     }
 
+    // Prefer backdrop_path for horizontal rows, but fall back to poster_path if needed
+    const imageUrl = item.backdrop_path 
+      ? `${TMDB_IMAGE_BASE_URL}original${item.backdrop_path}` 
+      : (item.poster_path ? `${TMDB_IMAGE_BASE_URL}w500${item.poster_path}` : '');
+
     return {
       id: `tmdb:${item.id}`, // Prefix TMDB IDs to avoid collision with Stremio IDs
-      imageUrl: `${TMDB_IMAGE_BASE_URL}w500${item.poster_path}`,
+      imageUrl: imageUrl,
       alt: item.title || item.name || 'TMDB Item',
       type: itemType,
     };
@@ -146,15 +216,18 @@ export default function HomePage() {
       const promises = tmdbCatalogsToFetch.map(async (tmdbCat) => {
         try {
           const tmdbItems = await fetchTmdbData(tmdbCat.endpoint, apiKey);
-          const mediaItems: MediaItem[] = tmdbItems
+          
+          // Process TMDB items with basic backdrop/poster paths first
+          const basicMediaItems: MediaItem[] = tmdbItems
             .map(item => transformTmdbItemToMediaItem(item, tmdbCat.type))
             .filter((item): item is MediaItem => item !== null);
           
-          if (mediaItems.length > 0) {
+          if (basicMediaItems.length > 0) {
+            // Create a row with the basic items - enhanced ones will come later
             fetchedTmdbRows.push({
               id: `tmdb-${tmdbCat.id}`,
               title: `${tmdbCat.title} • TMDB`,
-              items: mediaItems,
+              items: basicMediaItems,
               source: 'tmdb',
             });
           }
@@ -169,6 +242,74 @@ export default function HomePage() {
       // Simple sort for TMDB rows, can be customized
       fetchedTmdbRows.sort((a,b) => a.title.localeCompare(b.title));
       setHomepageCatalogs(fetchedTmdbRows);
+
+      // Process each row for enhanced backdrops sequentially to avoid overloading
+      // This happens after the initial rows are displayed, providing a progressive enhancement
+      const enhanceRowBackdrops = async () => {
+        for (const row of fetchedTmdbRows) {
+          if (row.source !== 'tmdb') continue; // Only process TMDB rows
+
+          const enhancedItems = [...row.items];
+          let updatedCount = 0;
+          
+          // Process in small batches to avoid rate limiting
+          const BATCH_SIZE = 3;
+          for (let i = 0; i < row.items.length; i += BATCH_SIZE) {
+            const batch = row.items.slice(i, i + BATCH_SIZE);
+            const batchPromises = batch.map(async (item, batchIndex) => {
+              try {
+                // Extract numeric TMDB ID
+                const tmdbId = parseInt(item.id.replace('tmdb:', ''));
+                if (isNaN(tmdbId)) return;
+                
+                // Determine if movie or TV
+                const mediaType = item.type === 'movie' ? 'movie' : 'tv';
+                
+                // Get high-quality backdrop
+                const betterBackdrop = await fetchTmdbItemBackdrop(mediaType, tmdbId, apiKey);
+                if (betterBackdrop) {
+                  enhancedItems[i + batchIndex] = {
+                    ...item,
+                    imageUrl: betterBackdrop
+                  };
+                  updatedCount++;
+                }
+              } catch (error) {
+                console.warn(`Error enhancing backdrop for ${item.id}:`, error);
+              }
+            });
+            
+            await Promise.all(batchPromises);
+            
+            // If we made updates in this batch, update the state
+            if (updatedCount > 0) {
+              // Update the state with the enhanced items we have so far
+              setHomepageCatalogs(prevCatalogs => {
+                return prevCatalogs.map(prevRow => {
+                  if (prevRow.id === row.id) {
+                    return {
+                      ...prevRow,
+                      items: enhancedItems
+                    };
+                  }
+                  return prevRow;
+                });
+              });
+              
+              // Reset counter for next batch
+              updatedCount = 0;
+            }
+            
+            // Add a small delay to avoid overwhelming the API
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+        }
+      };
+      
+      // Start the enhancement process after initial render
+      enhanceRowBackdrops().catch(error => {
+        console.error("Error enhancing backdrops:", error);
+      });
 
       if (fetchedTmdbRows.length === 0) {
         setPageError("Could not load any content from TMDB. The API might be temporarily unavailable or there's no content for these categories.");
@@ -335,7 +476,8 @@ export default function HomePage() {
               key={catalogRow.id} 
               title={catalogRow.title} 
               items={catalogRow.items} 
-              addonId={catalogRow.source === 'addon' ? catalogRow.addonId : undefined} 
+              addonId={catalogRow.source === 'addon' ? catalogRow.addonId : undefined}
+              imageType={catalogRow.source === 'tmdb' ? 'backdrop' : 'poster'} // Use backdrop format for TMDB, poster for addons
               // Pass TMDB ID or Stremio ID appropriately to details page in MediaRow if needed
               // For TMDB items, catalogRow.items[any].id is `tmdb:${tmdb_id}`
             />

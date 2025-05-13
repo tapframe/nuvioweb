@@ -161,121 +161,87 @@ const fetchTmdbData = async (path: string, apiKey: string, params?: Record<strin
 };
 
 // --- Helper function to transform TMDB API response to our Meta interface ---
-const transformTmdbDetailsToMeta = (mainData: any, imageData: any, type: string, originalId: string): Meta => {
+const transformTmdbDetailsToMeta = (tmdbData: any, type: string, originalId: string): Meta => {
   const getYear = (dateString?: string): number | undefined => {
     if (!dateString) return undefined;
     return parseInt(dateString.substring(0, 4), 10);
   };
 
-  // Use /original path as suggested for best quality
-  const getImageUrl = (path?: string) => path ? `https://image.tmdb.org/t/p/original${path}` : undefined;
+  // Update to use original size for all images
+  const getPosterUrl = (path?: string) => path ? `https://image.tmdb.org/t/p/original${path}` : undefined;
+  const getBackdropUrl = (path?: string) => path ? `https://image.tmdb.org/t/p/original${path}` : undefined;
   
-  // --- Extract images prioritizing imageData --- 
-  console.log("transformTmdbDetailsToMeta: imageData:", imageData);
-  console.log("transformTmdbDetailsToMeta: mainData:", mainData); 
-  
-  // Logo
   let logoPath: string | undefined = undefined;
-  if (imageData?.logos?.length > 0) {
-    const englishLogo = imageData.logos.find((logo: any) => logo.iso_639_1 === 'en');
-    logoPath = englishLogo?.file_path || imageData.logos[0]?.file_path;
-    console.log("transformTmdbDetailsToMeta: Found logoPath in imageData:", logoPath);
+  console.log("transformTmdbDetailsToMeta: Raw tmdbData.images:", tmdbData.images); // Log raw images object
+  if (tmdbData.images?.logos?.length > 0) {
+    const englishLogo = tmdbData.images.logos.find((logo: any) => logo.iso_639_1 === 'en');
+    logoPath = englishLogo?.file_path || tmdbData.images.logos[0]?.file_path;
+    console.log("transformTmdbDetailsToMeta: Found logoPath:", logoPath); // Log selected logoPath
   } else {
-    console.log("transformTmdbDetailsToMeta: No logos found in imageData");
-    // No fallback for logo from mainData unless we revert to append_to_response=images
+    console.log("transformTmdbDetailsToMeta: No logos found in tmdbData.images.logos");
   }
-  const finalLogoUrl = getImageUrl(logoPath);
-  console.log("transformTmdbDetailsToMeta: Final constructed logo URL:", finalLogoUrl);
-  
-  // Backdrop
-  let backdropPath: string | undefined = undefined;
-  if (imageData?.backdrops?.length > 0) {
-      // Prioritize English backdrop, then first, fallback to mainData.backdrop_path
-      const englishBackdrop = imageData.backdrops.find((bd: any) => bd.iso_639_1 === 'en');
-      backdropPath = englishBackdrop?.file_path || imageData.backdrops[0]?.file_path;
-       console.log("transformTmdbDetailsToMeta: Found backdropPath in imageData:", backdropPath);
-  } else {
-      console.log("transformTmdbDetailsToMeta: No backdrops found in imageData, checking mainData...");
-      backdropPath = mainData?.backdrop_path;
-      if (backdropPath) console.log("transformTmdbDetailsToMeta: Found backdropPath in mainData:", backdropPath);
-      else console.log("transformTmdbDetailsToMeta: No backdropPath found in mainData either.");
-  }
-  const finalBackdropUrl = getImageUrl(backdropPath);
-  console.log("transformTmdbDetailsToMeta: Final constructed backdrop URL:", finalBackdropUrl);
-
-  // Poster
-  let posterPath: string | undefined = undefined;
-  if (imageData?.posters?.length > 0) {
-       // Prioritize English poster, then first, fallback to mainData.poster_path
-      const englishPoster = imageData.posters.find((p: any) => p.iso_639_1 === 'en');
-      posterPath = englishPoster?.file_path || imageData.posters[0]?.file_path;
-      console.log("transformTmdbDetailsToMeta: Found posterPath in imageData:", posterPath);
-  } else {
-      console.log("transformTmdbDetailsToMeta: No posters found in imageData, checking mainData...");
-      posterPath = mainData?.poster_path;
-      if (posterPath) console.log("transformTmdbDetailsToMeta: Found posterPath in mainData:", posterPath);
-      else console.log("transformTmdbDetailsToMeta: No posterPath found in mainData either.");
-  }
-  const finalPosterUrl = getImageUrl(posterPath);
-   console.log("transformTmdbDetailsToMeta: Final constructed poster URL:", finalPosterUrl);
-  // --- End Image Extraction ---
+  const getLogoUrl = (path?: string) => path ? `https://image.tmdb.org/t/p/original${path}` : undefined;
+  const finalLogoUrl = getLogoUrl(logoPath);
+  console.log("transformTmdbDetailsToMeta: Final constructed logo URL:", finalLogoUrl); // Log final URL
 
   let director: string | undefined = undefined;
-  if (mainData.credits?.crew?.length > 0) {
-    const directorEntry = mainData.credits.crew.find((person: any) => person.job === 'Director');
+  if (tmdbData.credits?.crew?.length > 0) {
+    const directorEntry = tmdbData.credits.crew.find((person: any) => person.job === 'Director');
     if (directorEntry) director = directorEntry.name;
   }
 
-  const cast = mainData.credits?.cast?.slice(0, 15).map((actor: any) => actor.name) || [];
+  const cast = tmdbData.credits?.cast?.slice(0, 15).map((actor: any) => actor.name) || [];
 
   let trailerUrl: string | undefined = undefined;
-  if (mainData.videos?.results?.length > 0) {
-    const officialTrailer = mainData.videos.results.find(
+  if (tmdbData.videos?.results?.length > 0) {
+    const officialTrailer = tmdbData.videos.results.find(
         (video: any) => video.type === 'Trailer' && video.official && video.site === 'YouTube'
     );
     if (officialTrailer) {
         trailerUrl = `https://www.youtube.com/watch?v=${officialTrailer.key}`;
     } else {
-        const anyTrailer = mainData.videos.results.find((video: any) => video.type === 'Trailer' && video.site === 'YouTube');
+        // Fallback to any trailer if no official one
+        const anyTrailer = tmdbData.videos.results.find((video: any) => video.type === 'Trailer' && video.site === 'YouTube');
         if (anyTrailer) trailerUrl = `https://www.youtube.com/watch?v=${anyTrailer.key}`;
     }
   }
   
   let certification: string | undefined = undefined;
-  // Certification logic uses specific fields that are usually part of main details, not images endpoint
-  if (type === 'movie' && mainData.release_dates?.results) {
-    const usRelease = mainData.release_dates.results.find((r: any) => r.iso_3166_1 === 'US');
+  if (type === 'movie' && tmdbData.release_dates?.results) {
+    const usRelease = tmdbData.release_dates.results.find((r: any) => r.iso_3166_1 === 'US');
     if (usRelease?.release_dates?.length > 0) {
       certification = usRelease.release_dates.find((rd: any) => rd.certification !== "")?.certification;
     }
-  } else if (type === 'series' && mainData.content_ratings?.results) {
-    const usRating = mainData.content_ratings.results.find((r: any) => r.iso_3166_1 === 'US');
+  } else if (type === 'series' && tmdbData.content_ratings?.results) {
+    const usRating = tmdbData.content_ratings.results.find((r: any) => r.iso_3166_1 === 'US');
     certification = usRating?.rating;
   }
 
-  const releaseDate = mainData.release_date || mainData.first_air_date;
+  const releaseDate = tmdbData.release_date || tmdbData.first_air_date;
 
   return {
-    id: originalId, 
-    type: type, 
-    name: mainData.title || mainData.name || 'Untitled',
-    poster: finalPosterUrl,
-    background: finalBackdropUrl,
+    id: originalId, // Use the original id like 'tmdb:12345'
+    type: type, // 'movie' or 'series'
+    name: tmdbData.title || tmdbData.name || 'Untitled',
+    poster: getPosterUrl(tmdbData.poster_path),
+    background: getBackdropUrl(tmdbData.backdrop_path),
     logo: finalLogoUrl,
-    description: mainData.overview || 'No description available.',
-    releaseInfo: releaseDate ? releaseDate.substring(0, 4) : 'N/A', 
+    description: tmdbData.overview || 'No description available.',
+    releaseInfo: releaseDate ? releaseDate.substring(0, 4) : 'N/A', // Just year for now
     year: getYear(releaseDate),
-    runtime: mainData.runtime 
-      ? `${mainData.runtime} min` 
-      : (mainData.episode_run_time?.[0] ? `${mainData.episode_run_time[0]} min/ep` : undefined),
-    genres: mainData.genres?.map((g: any) => g.name) || [],
-    director: director ? [director] : undefined, 
+    runtime: tmdbData.runtime 
+      ? `${tmdbData.runtime} min` 
+      : (tmdbData.episode_run_time?.[0] ? `${tmdbData.episode_run_time[0]} min/ep` : undefined),
+    genres: tmdbData.genres?.map((g: any) => g.name) || [],
+    director: director ? [director] : undefined, // Meta expects string[] or string
     cast: cast,
-    imdbRating: mainData.vote_average ? mainData.vote_average.toFixed(1) : undefined,
-    country: mainData.production_countries?.map((c: any) => c.name) || [],
-    language: mainData.spoken_languages?.map((l: any) => l.english_name) || [],
+    imdbRating: tmdbData.vote_average ? tmdbData.vote_average.toFixed(1) : undefined,
+    country: tmdbData.production_countries?.map((c: any) => c.name) || [],
+    language: tmdbData.spoken_languages?.map((l: any) => l.english_name) || [],
     certification: certification,
     trailer: trailerUrl,
+    // videos: tmdbData.videos?.results.map((v:any) => ({id: v.key, title: v.name, type: v.type, site: v.site})), // map if needed
+    // seasons: handled separately for series
   };
 };
 
@@ -486,48 +452,132 @@ export default function DetailsPage() {
 
         const numericId = id.substring(5); // Use decoded id
         const tmdbType = type === 'series' ? 'tv' : 'movie';
-        const basePath = `/${tmdbType}/${numericId}`;
-        
-        const mainDetailsParams = {
-            append_to_response: `credits,videos,external_ids${tmdbType === 'tv' ? ',content_ratings' : ''}`,
+        const path = `/${tmdbType}/${numericId}`;
+        const queryParams = {
+            append_to_response: `images,videos,credits,external_ids${tmdbType === 'tv' ? ',content_ratings' : ''}`,
             language: 'en-US'
-        };
-        const imageParams = {
-            include_image_language: 'en,null' // Fetch English and imageless language entries
         };
 
         try {
-            console.log(`DetailsPage (TMDB): Fetching main details for ${basePath}`);
-            const mainData = await fetchTmdbData(basePath, tmdbApiKey, mainDetailsParams);
-            console.log(`DetailsPage (TMDB): Received main data:`, mainData);
+            console.log(`DetailsPage (TMDB): Fetching details for ${path}`);
+            const tmdbData = await fetchTmdbData(path, tmdbApiKey, queryParams);
+            console.log(`DetailsPage (TMDB): Received data:`, tmdbData);
 
-            console.log(`DetailsPage (TMDB): Fetching images for ${basePath}/images`);
-            let imageData: any = {}; // Initialize as empty object
-            try {
-                imageData = await fetchTmdbData(`${basePath}/images`, tmdbApiKey, imageParams);
-                console.log(`DetailsPage (TMDB): Received image data:`, imageData);
-            } catch (imgError: any) {
-                console.warn(`DetailsPage (TMDB): Could not fetch images from ${basePath}/images. Error: ${imgError.message}`);
-                // Proceed without imageData, transformation function will handle missing image data
-            }
+            const transformedDetails = transformTmdbDetailsToMeta(tmdbData, type, id as string);
+            // Temp placeholder until transform function is ready
+            /* const transformedDetails: Meta = {
+                 id: id, // Keep original tmdb: prefix id
+                 type: type,
+                 name: tmdbData.title || tmdbData.name || 'Untitled',
+                 poster: tmdbData.poster_path ? `https://image.tmdb.org/t/p/w500${tmdbData.poster_path}` : undefined,
+                 background: tmdbData.backdrop_path ? `https://image.tmdb.org/t/p/w1280${tmdbData.backdrop_path}` : undefined,
+                 description: tmdbData.overview || 'No description available.',
+                 releaseInfo: tmdbData.release_date || tmdbData.first_air_date || '',
+                 imdbRating: tmdbData.vote_average?.toFixed(1) || undefined,
+                 genres: tmdbData.genres?.map((g: any) => g.name) || [],
+                 runtime: tmdbData.runtime ? `${tmdbData.runtime} min` : (tmdbData.episode_run_time?.[0] ? `${tmdbData.episode_run_time[0]} min/ep` : undefined),
+                 // Add more fields later in the proper transform function
+             }; */
 
-            const transformedDetails = transformTmdbDetailsToMeta(mainData, imageData, type, id as string);
-            
             setDetails(transformedDetails);
 
-            // --- Handle TMDB Series Seasons (uses mainData) ---
-            if (tmdbType === 'tv' && mainData.seasons) {
-                const seasonNumbers = mainData.seasons
-                    .filter((s: any) => s.season_number !== 0) 
+            // --- Fetch images separately with the dedicated endpoint ---
+            // This ensures we get both English and language-neutral logos, and high-quality backdrops
+            const fetchTmdbImages = async () => {
+              try {
+                const imagePath = `/${tmdbType}/${numericId}/images`;
+                const imageParams = {
+                  api_key: tmdbApiKey,
+                  include_image_language: 'en,null'  // Get English and language-neutral images
+                };
+                
+                // Construct URL manually since we're using a different parameter format
+                const queryString = new URLSearchParams(imageParams).toString();
+                const imageUrl = `https://api.themoviedb.org/3${imagePath}?${queryString}`;
+                
+                console.log(`DetailsPage (TMDB): Fetching images from: ${imageUrl}`);
+                const response = await fetch(imageUrl);
+                if (!response.ok) {
+                  throw new Error(`Image fetch failed: ${response.status}`);
+                }
+                
+                const imageData = await response.json();
+                console.log(`DetailsPage (TMDB): Got image data:`, imageData);
+                
+                // Update details object with a functional update to ensure we have the latest state
+                setDetails(prevDetails => {
+                  if (!prevDetails) return null;
+                  
+                  const updatedDetails = {...prevDetails};
+                  
+                  // --- LOGO HANDLING ---
+                  // Check if there are logos
+                  if (imageData.logos && imageData.logos.length > 0) {
+                    // Find the best logo (prefer English, then null language, then first available)
+                    const englishLogo = imageData.logos.find((logo: any) => logo.iso_639_1 === 'en');
+                    const neutralLogo = imageData.logos.find((logo: any) => logo.iso_639_1 === null);
+                    const bestLogo = englishLogo || neutralLogo || imageData.logos[0];
+                    
+                    if (bestLogo) {
+                      // Construct logo URL with original size for best quality
+                      const logoImageUrl = `https://image.tmdb.org/t/p/original${bestLogo.file_path}`;
+                      console.log(`DetailsPage (TMDB): Using logo URL: ${logoImageUrl}`);
+                      updatedDetails.logo = logoImageUrl;
+                    }
+                  } else {
+                    console.log(`DetailsPage (TMDB): No logos found for ${tmdbType}/${numericId}`);
+                  }
+                  
+                  // --- BACKDROP HANDLING ---
+                  // Check if there are backdrops and select the best one
+                  if (imageData.backdrops && imageData.backdrops.length > 0) {
+                    // Sort by vote average (if available) or vote count, then take the first (best) one
+                    const sortedBackdrops = [...imageData.backdrops];
+                    sortedBackdrops.sort((a, b) => {
+                      // First try to sort by vote_average
+                      if (a.vote_average !== undefined && b.vote_average !== undefined) {
+                        return b.vote_average - a.vote_average;
+                      }
+                      // Then try to sort by vote_count
+                      if (a.vote_count !== undefined && b.vote_count !== undefined) {
+                        return b.vote_count - a.vote_count;
+                      }
+                      // Default to the order they came in
+                      return 0;
+                    });
+                    
+                    const bestBackdrop = sortedBackdrops[0];
+                    const backdropUrl = `https://image.tmdb.org/t/p/original${bestBackdrop.file_path}`;
+                    console.log(`DetailsPage (TMDB): Using high-quality backdrop: ${backdropUrl}`);
+                    updatedDetails.background = backdropUrl;
+                  }
+                  
+                  return updatedDetails;
+                });
+                
+              } catch (error) {
+                console.error(`DetailsPage (TMDB): Error fetching images:`, error);
+                // Don't set an error state or affect the UI if image fetch fails
+              }
+            };
+            
+            // Call the images fetch function
+            fetchTmdbImages();
+
+            // --- Handle TMDB Series Seasons ---
+            if (tmdbType === 'tv' && tmdbData.seasons) {
+                const seasonNumbers = tmdbData.seasons
+                    .filter((s: any) => s.season_number !== 0) // Often season 0 is specials
                     .map((s: any) => s.season_number)
                     .sort((a: number, b: number) => a - b);
                 console.log(`DetailsPage (TMDB): Found seasons:`, seasonNumbers);
                 setAvailableSeasons(seasonNumbers);
+                // If seasons exist, set default selected season
                 if (seasonNumbers.length > 0) {
                     setSelectedSeason(seasonNumbers[0]); 
                 } else {
-                    setSelectedSeason(1); 
-                    setAvailableSeasons([1]);
+                    setSelectedSeason(1); // Fallback if filter removed all seasons
+                    setAvailableSeasons([1]); // Set fallback
                 }
             } else {
                  setAvailableSeasons([]);
