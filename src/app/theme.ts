@@ -12,13 +12,16 @@ const theme = createTheme({
   typography: {
     fontFamily: roboto.style.fontFamily,
   },
-  // You can customize the theme further here
-  // palette: {
-  //   mode: 'dark', // Example: Set default mode to dark
-  //   primary: {
-  //     main: '#e50914', // Example: Netflix red
-  //   },
-  // },
+  palette: {
+    mode: 'dark',
+    primary: {
+      main: '#e50914', // Netflix red
+    },
+    background: {
+      default: '#141414', // Dark background for body
+      paper: '#1c1c1c',   // Slightly lighter dark for paper elements like cards, dialogs
+    },
+  },
 });
 
 export default theme; 

@@ -4,268 +4,347 @@ import React, { useState, useEffect } from 'react';
 import { Box, CircularProgress, Typography, Alert } from '@mui/material';
 import Hero from '../components/Hero';
 import MediaRow from '../components/MediaRow';
+import { useAddonContext } from '@/context/AddonContext';
+import { useTmdbContext } from '@/context/TmdbContext'; // Import TMDB context
 
-// --- Types (Should match addons/page.tsx structure) ---
-interface AddonCatalog {
+// --- Stremio Types ---
+interface StremioAddonCatalog {
   type: string;
   id: string;
   name?: string;
 }
 
-interface AddonManifest {
-  id: string;
-  version: string;
-  name: string;
-  description?: string;
-  resources?: (string | { name: string; types?: string[]; idPrefixes?: string[] })[];
-  types?: string[];
-  catalogs?: AddonCatalog[];
-  // Add other relevant fields
+interface StremioCatalogResponse {
+  metas?: { id: string; name?: string; poster?: string; type?: string }[];
+}
+// --- End Stremio Types ---
+
+// --- TMDB Types ---
+const TMDB_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/';
+
+interface TmdbItem {
+  id: number;
+  poster_path: string | null;
+  backdrop_path: string | null;
+  overview: string;
+  vote_average: number;
+  // Movie specific
+  title?: string;
+  release_date?: string;
+  // TV specific
+  name?: string;
+  first_air_date?: string;
+  media_type?: 'movie' | 'tv'; // present in multi-search or trending all
 }
 
-interface InstalledAddon extends AddonManifest {
-  manifestUrl: string;
-  selectedCatalogIds?: string[]; // Crucial for filtering
+interface TmdbPagedResponse {
+  page: number;
+  results: TmdbItem[];
+  total_pages: number;
+  total_results: number;
 }
+// --- End TMDB Types ---
 
+
+// --- Shared Types for MediaRow ---
 interface MediaItem {
-  id: string | number;
+  id: string;       // Stremio ID (e.g., tt12345) or TMDB ID (e.g., tmdb:123)
   imageUrl: string;
   alt: string;
+  type: 'movie' | 'series'; // Standardized type
 }
 
-interface Catalog {
+interface HomepageCatalogRow {
   title: string;
   items: MediaItem[];
-  id: string; // e.g., movie/top
-  addonId?: string; // Add addon ID for tracking source
+  id: string; // Unique ID for the row (e.g., addonId-catalogId or tmdb-trending_movies)
+  addonId?: string; // Only for addon-sourced rows
+  source: 'addon' | 'tmdb'; // To distinguish the origin
 }
-
-// Stremio Catalog Response Structure (Simplified)
-interface StremioMeta {
-    id: string;
-    type: string;
-    name: string;
-    poster?: string;
-    posterShape?: 'square' | 'poster' | 'landscape';
-    // Add other potential fields like description, year, etc.
-}
-
-interface StremioCatalogResponse {
-    metas: StremioMeta[];
-}
-// --- End Types ---
+// --- End Shared Types ---
 
 
 export default function HomePage() {
-  const [catalogs, setCatalogs] = useState<Catalog[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  // Stremio Addon Context
+  const {
+    installedAddons,
+    isLoading: isLoadingAddons,
+    error: addonContextError
+  } = useAddonContext();
 
-  const getCatalogUniqueId = (catalog: AddonCatalog) => `${catalog.type}/${catalog.id}`;
+  // TMDB Context
+  const {
+    tmdbApiKey,
+    isLoadingKey: isLoadingTmdbKey,
+    // keyError: tmdbKeyError // We can handle this if needed, e.g. disable TMDB section
+  } = useTmdbContext();
+
+  const [homepageCatalogs, setHomepageCatalogs] = useState<HomepageCatalogRow[]>([]);
+  const [isLoadingPageData, setIsLoadingPageData] = useState<boolean>(true);
+  const [pageError, setPageError] = useState<string | null>(null);
+
+  const getStremioCatalogUniqueId = (catalog: StremioAddonCatalog) => `${catalog.type}/${catalog.id}`;
+
+  // --- TMDB Data Fetching Functions --- 
+  const fetchTmdbData = async (endpoint: string, apiKey: string): Promise<TmdbItem[]> => {
+    const url = `https://api.themoviedb.org/3${endpoint}?api_key=${apiKey}&language=en-US&page=1`;
+    console.log(`HomePage (TMDB): Fetching ${url}`);
+    const response = await fetch(url);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ message: response.statusText }));
+      throw new Error(`TMDB API error for ${endpoint}: ${errorData.message || response.statusText} (${response.status})`);
+    }
+    const data: TmdbPagedResponse = await response.json();
+    return data.results || [];
+  };
+
+  const transformTmdbItemToMediaItem = (item: TmdbItem, typeOverride?: 'movie' | 'series'): MediaItem | null => {
+    if (!item.poster_path) return null; // Skip items without posters
+    
+    let itemType: 'movie' | 'series';
+    if (typeOverride) {
+        itemType = typeOverride;
+    } else if (item.media_type === 'movie') {
+        itemType = 'movie';
+    } else if (item.media_type === 'tv') {
+        itemType = 'series';
+    } else if (item.title && item.release_date) { // Heuristic for movie if media_type is missing
+        itemType = 'movie';
+    } else if (item.name && item.first_air_date) { // Heuristic for TV/series if media_type is missing
+        itemType = 'series';
+    } else {
+        console.warn("HomePage (TMDB): Could not determine type for TMDB item", item);
+        return null; // Cannot determine type
+    }
+
+    return {
+      id: `tmdb:${item.id}`, // Prefix TMDB IDs to avoid collision with Stremio IDs
+      imageUrl: `${TMDB_IMAGE_BASE_URL}w500${item.poster_path}`,
+      alt: item.title || item.name || 'TMDB Item',
+      type: itemType,
+    };
+  };
+
+  const fetchTmdbHomepageCatalogs = async (apiKey: string) => {
+    setIsLoadingPageData(true);
+    setPageError(null);
+    setHomepageCatalogs([]);
+    console.log("HomePage: Fetching catalogs from TMDB...");
+
+    const tmdbCatalogsToFetch = [
+      { id: 'trending_movies_week', endpoint: '/trending/movie/week', title: 'Trending Movies', type: 'movie' as const },
+      { id: 'popular_movies', endpoint: '/movie/popular', title: 'Popular Movies', type: 'movie' as const },
+      { id: 'top_rated_movies', endpoint: '/movie/top_rated', title: 'Top Rated Movies', type: 'movie' as const },
+      { id: 'trending_tv_week', endpoint: '/trending/tv/week', title: 'Trending TV Shows', type: 'series' as const },
+      { id: 'popular_tv', endpoint: '/tv/popular', title: 'Popular TV Shows', type: 'series' as const },
+      { id: 'top_rated_tv', endpoint: '/tv/top_rated', title: 'Top Rated TV Shows', type: 'series' as const },
+    ];
+
+    try {
+      const fetchedTmdbRows: HomepageCatalogRow[] = [];
+      const promises = tmdbCatalogsToFetch.map(async (tmdbCat) => {
+        try {
+          const tmdbItems = await fetchTmdbData(tmdbCat.endpoint, apiKey);
+          const mediaItems: MediaItem[] = tmdbItems
+            .map(item => transformTmdbItemToMediaItem(item, tmdbCat.type))
+            .filter((item): item is MediaItem => item !== null);
+          
+          if (mediaItems.length > 0) {
+            fetchedTmdbRows.push({
+              id: `tmdb-${tmdbCat.id}`,
+              title: `${tmdbCat.title} • TMDB`,
+              items: mediaItems,
+              source: 'tmdb',
+            });
+          }
+        } catch (catError) {
+          console.error(`HomePage (TMDB): Error fetching TMDB catalog ${tmdbCat.title}:`, catError);
+          // Optionally collect these errors to show a partial error message
+        }
+      });
+
+      await Promise.all(promises);
+      
+      // Simple sort for TMDB rows, can be customized
+      fetchedTmdbRows.sort((a,b) => a.title.localeCompare(b.title));
+      setHomepageCatalogs(fetchedTmdbRows);
+
+      if (fetchedTmdbRows.length === 0) {
+        setPageError("Could not load any content from TMDB. The API might be temporarily unavailable or there's no content for these categories.");
+      }
+
+    } catch (error: any) {
+      console.error("HomePage (TMDB): Failed to fetch TMDB homepage catalogs:", error);
+      setPageError(`Failed to load data from TMDB: ${error.message}`);
+    } finally {
+      setIsLoadingPageData(false);
+    }
+  };
+  // --- End TMDB Data Fetching Functions ---
+
+  // --- Stremio Addon Data Fetching (Original Logic, adapted) ---
+  const fetchStremioHomepageCatalogs = async () => {
+    if (!installedAddons || installedAddons.length === 0) {
+      console.log("HomePage: No addons installed or loaded yet for Stremio fetching.");
+      setHomepageCatalogs([]);
+      // Only set error if TMDB isn't also an option or has failed
+      if (!addonContextError) {
+           setPageError("No Stremio addons are currently installed. Please visit the Addons page to install some, or configure TMDB.");
+      }
+      setIsLoadingPageData(false);
+      return;
+    }
+    
+    setIsLoadingPageData(true);
+    setPageError(null);
+    console.log("HomePage: Fetching catalogs from Stremio Addons...");
+    let allFetchedStremioRows: HomepageCatalogRow[] = [];
+    const fetchPromises: Promise<void>[] = [];
+
+    installedAddons.forEach(addon => {
+      const addonSelectedCatalogs = addon.catalogs?.filter(catalog => 
+        addon.selectedCatalogIds?.includes(getStremioCatalogUniqueId(catalog))
+      ) || [];
+
+      if (addonSelectedCatalogs.length > 0) {
+        const baseUrl = addon.manifestUrl.substring(0, addon.manifestUrl.lastIndexOf('/'));
+
+        addonSelectedCatalogs.forEach(stremioCatalog => {
+          const catalogFullId = getStremioCatalogUniqueId(stremioCatalog);
+          let catalogTitle = stremioCatalog.name || `${stremioCatalog.type} ${stremioCatalog.id}`.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          
+          const lowerCaseName = catalogTitle.toLowerCase();
+          const hasMovieWord = lowerCaseName.includes('movie');
+          const hasSeriesWord = lowerCaseName.includes('series') || lowerCaseName.includes('tv') || lowerCaseName.includes('show');
+
+          if (stremioCatalog.type === 'movie' && !hasMovieWord) catalogTitle += ' Movies';
+          else if (stremioCatalog.type === 'series' && !hasSeriesWord) catalogTitle += ' TV Shows';
+          
+          catalogTitle = `${catalogTitle} • ${addon.name}`;
+          const catalogUrl = `${baseUrl}/catalog/${stremioCatalog.type}/${stremioCatalog.id}.json`;
+          
+          fetchPromises.push(
+            fetch(catalogUrl)
+              .then(response => {
+                if (!response.ok) throw new Error(`Fetch failed for ${catalogTitle}: ${response.statusText} (${catalogUrl})`);
+                return response.json() as Promise<StremioCatalogResponse>;
+              })
+              .then(data => {
+                if (data?.metas && data.metas.length > 0) {
+                  const items: MediaItem[] = data.metas
+                    .filter(meta => meta.poster && meta.type) // Ensure type is present for Stremio items
+                    .map(meta => ({ 
+                      id: meta.id!,
+                      imageUrl: meta.poster!,
+                      alt: meta.name || meta.id!,
+                      type: meta.type as 'movie' | 'series' // Assuming type is 'movie' or 'series'
+                    }));
+                  if (items.length > 0) {
+                    allFetchedStremioRows.push({ 
+                      title: catalogTitle, 
+                      items: items, 
+                      id: `${addon.id}-${catalogFullId}`,
+                      addonId: addon.id,
+                      source: 'addon',
+                    });
+                  }
+                }
+              })
+              .catch(err => {
+                console.error(`HomePage (Stremio): Error fetching/processing catalog ${catalogTitle}:`, err);
+              })
+          );
+        });
+      }
+    });
+
+    try {
+      await Promise.all(fetchPromises);
+      allFetchedStremioRows.sort((a, b) => a.title.localeCompare(b.title));
+      setHomepageCatalogs(allFetchedStremioRows);
+
+      if (allFetchedStremioRows.length === 0 && installedAddons.some(a => a.selectedCatalogIds && a.selectedCatalogIds.length > 0)) {
+          setPageError("No content could be loaded from the selected Stremio addon catalogs. Check addon configurations or CORS issues.");
+      } else if (allFetchedStremioRows.length === 0 && installedAddons.length > 0) {
+          setPageError("No Stremio addon catalogs selected to display. Visit the Addons page to enable some.");
+      }
+
+    } catch (overallError) {
+       console.error("HomePage (Stremio): Error during Promise.all for catalogs:", overallError);
+       setPageError("An error occurred while fetching Stremio addon catalog data.");
+    } finally {
+      setIsLoadingPageData(false);
+    }
+  };
+  // --- End Stremio Addon Data Fetching ---
+
 
   useEffect(() => {
-    const fetchCatalogs = async () => {
-      setIsLoading(true);
-      setError(null);
-      let loadedAddons: InstalledAddon[] = [];
-      let allFetchedCatalogs: Catalog[] = [];
+    // Handle addon context errors that might affect decision logic
+    if (addonContextError) {
+        setPageError(`Addon loading error: ${addonContextError}`);
+        // Potentially stop further processing if addons are crucial and errored
+    }
 
-      // 1. Load installed addons (including selectedCatalogIds)
-      try {
-        const storedAddons = localStorage.getItem('installedAddons');
-        if (storedAddons) {
-          // Assuming addons page saves structure with selectedCatalogIds
-          loadedAddons = JSON.parse(storedAddons);
+    // Decide whether to fetch from TMDB or Stremio Addons
+    if (!isLoadingTmdbKey) { // Wait until TMDB key status is known
+      if (tmdbApiKey) {
+        fetchTmdbHomepageCatalogs(tmdbApiKey);
+      } else {
+        // No TMDB key, or it was explicitly removed. Fallback to Stremio addons.
+        // Wait for addons to load before fetching from them.
+        if (!isLoadingAddons) {
+          fetchStremioHomepageCatalogs();
         } else {
-            loadedAddons = []; // Ensure it's an array
+          console.log("HomePage: Waiting for Stremio addons to load...");
+          setIsLoadingPageData(true); // Explicitly set loading if waiting for addons context
         }
-      } catch (err) {
-        console.error("Error loading addons:", err);
-        setError("Failed to load installed addons.");
-        setIsLoading(false);
-        return;
       }
+    } else {
+        console.log("HomePage: Waiting for TMDB API key status...");
+        setIsLoadingPageData(true); // Explicitly set loading if waiting for TMDB context
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tmdbApiKey, isLoadingTmdbKey, installedAddons, isLoadingAddons, addonContextError]);
 
-      if (loadedAddons.length === 0) {
-         console.log("No addons installed.");
-         setIsLoading(false);
-         setCatalogs([]);
-         return;
-      }
 
-      const fetchPromises: Promise<void>[] = [];
-
-      loadedAddons.forEach(addon => {
-        const addonCatalogs = addon.catalogs || [];
-        const selectedIds = addon.selectedCatalogIds || []; // Get selected IDs for this addon
-        
-        // No need for the fallback logic here if addons page saves defaults
-
-        if (addonCatalogs.length > 0) {
-           console.log(`Processing addon: ${addon.name}`);
-           const baseUrl = addon.manifestUrl.substring(0, addon.manifestUrl.lastIndexOf('/'));
-
-           addonCatalogs.forEach(catalog => {
-             const catalogFullId = getCatalogUniqueId(catalog);
-             
-             // Create a better formatted catalog title
-             let catalogTitle = '';
-             
-             // If catalog has a name, use it
-             if (catalog.name) {
-               catalogTitle = catalog.name;
-               console.log(`Using catalog provided name: ${catalogTitle} for ${catalog.type}/${catalog.id}`);
-               
-               // Even for named catalogs, let's add the media type if not already included
-               // Check if catalog name already has movie/series/tv/show/movie words
-               const lowerCaseName = catalogTitle.toLowerCase();
-               const hasMovieWord = lowerCaseName.includes('movie');
-               const hasSeriesWord = lowerCaseName.includes('series') || 
-                                   lowerCaseName.includes('tv') || 
-                                   lowerCaseName.includes('show');
-               
-               // Add media type suffix if not already included
-               if (catalog.type === 'movie' && !hasMovieWord) {
-                 catalogTitle += ' Movies';
-               } else if (catalog.type === 'series' && !hasSeriesWord) {
-                 catalogTitle += ' TV Shows';
-               }
-               
-               console.log(`After adding media type to catalog name: ${catalogTitle}`);
-             } 
-             // Otherwise, format based on type and id
-             else {
-               // Format the catalog ID to be more readable
-               let formattedId = catalog.id
-                 .replace(/[-_]/g, ' ')  // Replace underscores/hyphens with spaces
-                 .replace(/\b\w/g, c => c.toUpperCase());  // Capitalize first letter of each word
-               
-               // Special case for common IDs - format for better readability
-               if (catalog.id === 'top') formattedId = 'Popular';
-               if (catalog.id === 'trending') formattedId = 'Trending';
-               if (catalog.id === 'recent') formattedId = 'Recent';
-               if (catalog.id === 'new') formattedId = 'New';
-               
-               console.log(`Formatting catalog ID "${catalog.id}" as "${formattedId}"`);
-               
-               // Format by catalog type - always include the media type
-               if (catalog.type === 'movie') {
-                 catalogTitle = `${formattedId} Movies`;
-               } else if (catalog.type === 'series') {
-                 catalogTitle = `${formattedId} TV Shows`;
-               } else {
-                 // For other types (like anime, channel, etc.)
-                 catalogTitle = `${formattedId} ${catalog.type.charAt(0).toUpperCase() + catalog.type.slice(1)}`;
-               }
-               
-               console.log(`Formatted catalog title before addon name: ${catalogTitle}`);
-             }
-             
-             // Add addon name as attribution
-             catalogTitle = `${catalogTitle} • ${addon.name}`;
-             console.log(`Final catalog title: ${catalogTitle}`);
-             
-             // *** Check if this catalog is selected ***
-             if (!selectedIds.includes(catalogFullId)) {
-                console.log(`Skipping catalog (not selected): ${catalogTitle}`);
-                return; // Skip to the next catalog if not selected
-             }
-
-             // Construct catalog URL
-             const catalogUrl = `${baseUrl}/catalog/${catalog.type}/${catalog.id}.json`;
-             console.log(`Preparing to fetch SELECTED catalog: ${catalogTitle} from ${catalogUrl}`);
-
-             // Create fetch promise ONLY for selected catalogs
-             fetchPromises.push(
-               fetch(catalogUrl) // Add fetch options if needed (e.g., mode: 'cors')
-                 .then(response => {
-                   if (!response.ok) throw new Error(`Fetch failed for ${catalogTitle}: ${response.statusText}`);
-                   return response.json() as Promise<StremioCatalogResponse>;
-                 })
-                 .then(data => {
-                   if (data?.metas?.length > 0) {
-                     const items: MediaItem[] = data.metas
-                        .filter(meta => meta.poster) // Ensure poster exists
-                        .map(meta => ({ 
-                          id: meta.id, 
-                          imageUrl: meta.poster!, 
-                          alt: meta.name || meta.id,
-                          type: meta.type || catalog.type // Use meta type if available, otherwise fallback to catalog type
-                        }));
-                     if (items.length > 0) {
-                         allFetchedCatalogs.push({ 
-                           title: catalogTitle, 
-                           items: items, 
-                           id: catalogFullId,
-                           addonId: addon.id // Store the addon ID to pass to MediaRow
-                         });
-                         console.log(`Successfully processed ${items.length} items for: ${catalogTitle}`);
-                     } else {
-                          console.log(`Catalog ${catalogTitle} had items but none with posters.`);
-                     }
-                   } else {
-                     console.warn(`No valid 'metas' array found for catalog: ${catalogTitle}`, data);
-                   }
-                 })
-                 .catch(err => {
-                   console.error(`Error fetching/processing catalog ${catalogTitle}:`, err);
-                 })
-             );
-           }); // End forEach catalog
-        } // End if addon has catalogs
-      }); // End forEach addon
-
-       // Execute fetches and update state
-       try {
-         console.warn("Fetching selected catalogs directly (CORS may still block)...", fetchPromises.length, "requests planned.");
-         await Promise.all(fetchPromises);
-         setCatalogs(allFetchedCatalogs);
-
-         if (allFetchedCatalogs.length === 0 && loadedAddons.some(a => a.selectedCatalogIds && a.selectedCatalogIds.length > 0)) {
-             setError("No catalogs could be loaded. Check CORS, addon URLs, or try re-installing addons.");
-         } else if (allFetchedCatalogs.length === 0 && loadedAddons.length > 0) {
-             setError("No catalogs selected. Visit the Addons page to enable some.");
-         }
-
-       } catch (overallError) {
-          console.error("Error during Promise.all for catalogs:", overallError);
-          setError("An error occurred fetching catalog data.");
-       } finally {
-         setIsLoading(false);
-       }
-    };
-
-    fetchCatalogs();
-  }, []);
+  // Combined loading state for UI
+  const showLoadingIndicator = isLoadingTmdbKey || isLoadingAddons || isLoadingPageData;
 
   return (
-    <Box sx={{ backgroundColor: '#141414', pb: 4 }}>
+    <Box>
       <Hero />
-      <Box sx={{ mt: -4, position: 'relative', zIndex: 3 }}>
-         {isLoading && (
-            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-                <CircularProgress color="inherit" />
-            </Box>
-         )}
-         {error && (
-            <Alert severity="warning" sx={{ mx: { xs: 2, md: 7.5 }, mb: 2, backgroundColor: '#555', color: 'white' }}>
-                {error} { /* Changed severity to warning as some errors are expected (CORS) */}
+      <Box sx={{ py: 4, backgroundColor: '#141414' }}>
+        {showLoadingIndicator && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
+            <CircularProgress sx={{color: 'red'}} />
+          </Box>
+        )}
+
+        {!showLoadingIndicator && pageError && (
+          <Alert severity="warning" sx={{ mx: { xs: 2, md: 7.5 }, my: 2, backgroundColor: '#333', color: 'white' }}>
+            {pageError}
+          </Alert>
+        )}
+        
+        {!showLoadingIndicator && !pageError && homepageCatalogs.length === 0 && (
+            <Alert severity="info" sx={{ mx: { xs: 2, md: 7.5 }, my: 2, backgroundColor: '#1f1f1f', color: 'white' }}>
+                No content to display. Please configure TMDB API key, or install and select Stremio addon catalogs.
             </Alert>
-         )}
-         {!isLoading && !error && catalogs.length === 0 && (
-             <Typography sx={{ color: 'grey.500', textAlign: 'center', p: 4 }}>
-                 No catalogs selected or available. Visit the Addons page to install or enable catalogs.
-             </Typography>
-         )}
-         {!isLoading && catalogs.map((catalog) => (
+        )}
+
+        {!showLoadingIndicator && homepageCatalogs.length > 0 && (
+          homepageCatalogs.map((catalogRow) => (
             <MediaRow 
-              key={catalog.id} 
-              title={catalog.title} 
-              items={catalog.items} 
-              addonId={catalog.addonId} 
+              key={catalogRow.id} 
+              title={catalogRow.title} 
+              items={catalogRow.items} 
+              addonId={catalogRow.source === 'addon' ? catalogRow.addonId : undefined} 
+              // Pass TMDB ID or Stremio ID appropriately to details page in MediaRow if needed
+              // For TMDB items, catalogRow.items[any].id is `tmdb:${tmdb_id}`
             />
-         ))}
+          ))
+        )}
       </Box>
     </Box>
   );
