@@ -154,18 +154,28 @@ export default function StremioVideoPlayer({
           setMuted(propValue);
           break;
         case 'time':
-          setCurrentTime(propValue);
+          console.log(`StremioVideoPlayer: time changed to ${propValue}`);
+          // Convert from ms to seconds if needed
+          const timeInSeconds = propValue !== null ? propValue / 1000 : 0;
+          setCurrentTime(timeInSeconds);
           if (duration > 0) {
-            setPlayed(propValue / duration);
+            setPlayed(timeInSeconds / duration);
           }
           break;
         case 'duration':
-          setDuration(propValue);
-          if (propValue > 0 && currentTime > 0) {
-            setPlayed(currentTime / propValue);
+          console.log(`StremioVideoPlayer: duration changed to ${propValue}`);
+          
+          // Stremio appears to be reporting duration as a large number
+          // Convert to seconds for display
+          const durationInSeconds = propValue !== null ? propValue / 1000 : 0;
+          console.log(`StremioVideoPlayer: converted duration to ${durationInSeconds} seconds`);
+          
+          setDuration(durationInSeconds);
+          if (durationInSeconds > 0 && currentTime > 0) {
+            setPlayed(currentTime / durationInSeconds);
           }
           // Having duration often means the video is loaded enough
-          if (propValue > 0) setLoading(false);
+          if (durationInSeconds > 0) setLoading(false);
           break;
         case 'buffering':
           setLoading(propValue); 
@@ -260,14 +270,23 @@ export default function StremioVideoPlayer({
 
   // Format time helper
   const formatTime = (seconds: number): string => {
+    // Check for invalid input
     if (isNaN(seconds) || seconds === null) return '00:00';
+    
+    // Check if the value is extremely large - might be in milliseconds
+    if (seconds > 86400 * 30) { // More than 30 days
+      console.warn(`StremioVideoPlayer: Unusually large time value detected: ${seconds}s. Converting from ms to s.`);
+      seconds = seconds / 1000; // Convert from ms to s if unusually large
+    }
+    
     const absSeconds = Math.abs(seconds);
     const hrs = Math.floor(absSeconds / 3600);
     const mins = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
+    
     let timeStr = '';
     if (hrs > 0) {
-      timeStr += `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+      timeStr += `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     } else {
       timeStr += `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
