@@ -1,12 +1,15 @@
 'use client';
 
-import React from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { SxProps, Theme } from '@mui/material/styles';
 import Skeleton from '@mui/material/Skeleton';
+import IconButton from '@mui/material/IconButton';
+import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 
 // Add the image enhancement helper function
 const getEnhancedImageUrl = (url: string): string => {
@@ -49,6 +52,10 @@ interface MediaRowProps {
 
 const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBottomMargin, imageType = 'poster' }) => {
   const router = useRouter();
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [showControls, setShowControls] = useState(false);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
   
   // Split the title by the bullet character to separate catalog name from addon name
   const titleParts = title.split(' • ');
@@ -96,19 +103,103 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBotto
     }
   };
 
+  const SCROLL_AMOUNT = 300; // Amount to scroll by in pixels, adjust as needed
+
+  const checkScrollability = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (container) {
+      setCanScrollLeft(container.scrollLeft > 0);
+      setCanScrollRight(container.scrollLeft < container.scrollWidth - container.clientWidth -1); // -1 for precision issues
+    }
+  }, []);
+
+  useEffect(() => {
+    checkScrollability();
+    const container = scrollContainerRef.current;
+    container?.addEventListener('scroll', checkScrollability);
+    window.addEventListener('resize', checkScrollability); // Re-check on resize
+
+    return () => {
+      container?.removeEventListener('scroll', checkScrollability);
+      window.removeEventListener('resize', checkScrollability);
+    };
+  }, [items, checkScrollability]); // Re-check if items change (e.g. new row loaded)
+
+
+  const scrollLeft = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollBy({ left: -SCROLL_AMOUNT, behavior: 'smooth' });
+    }
+  };
+
+  const scrollRight = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollBy({ left: SCROLL_AMOUNT, behavior: 'smooth' });
+    }
+  };
+
   // Debug output
   // console.log(`MediaRow received title: "${title}"`);
   // console.log(`Split into catalogName: "${catalogName}" and addonName: "${addonName}"`);
   // console.log(`Image type: ${imageType}`);
 
   return (
-    <Box sx={{ 
-      mb: disableBottomMargin ? 0 : 4, // Reduced bottom margin between rows
-      ml: { xs: 3, md: 7.5 },
-      position: 'relative',
-      mt: { xs: -3, md: -5 }, // Negative margin to pull up the first row closer to hero
-      zIndex: 5 // Higher z-index to ensure the row appears over the hero gradient
-    }}>
+    <Box 
+      sx={{ 
+        mb: disableBottomMargin ? 0 : 4, 
+        ml: { xs: 3, md: 7.5 },
+        position: 'relative', // For positioning scroll buttons
+        mt: { xs: -3, md: -5 }, 
+        zIndex: 5 
+      }}
+      onMouseEnter={() => setShowControls(true)}
+      onMouseLeave={() => setShowControls(false)}
+    >
+      {/* Left Scroll Button */}
+      {showControls && canScrollLeft && (
+        <IconButton
+          onClick={scrollLeft}
+          sx={{
+            position: 'absolute',
+            left: -10, // Adjust to be slightly outside or overlap
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 20, // Above items
+            backgroundColor: 'rgba(20, 20, 20, 0.7)',
+            color: 'white',
+            '&:hover': {
+              backgroundColor: 'rgba(20, 20, 20, 0.9)',
+            },
+            // Adjust padding/size if needed
+            padding: {xs: '4px', md: '8px'}
+          }}
+        >
+          <ChevronLeftIcon fontSize="large" />
+        </IconButton>
+      )}
+
+      {/* Right Scroll Button */}
+      {showControls && canScrollRight && (
+        <IconButton
+          onClick={scrollRight}
+          sx={{
+            position: 'absolute',
+            right: -10, // Adjust to be slightly outside or overlap
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 20, // Above items
+            backgroundColor: 'rgba(20, 20, 20, 0.7)',
+            color: 'white',
+            '&:hover': {
+              backgroundColor: 'rgba(20, 20, 20, 0.9)',
+            },
+            padding: {xs: '4px', md: '8px'}
+          }}
+        >
+          <ChevronRightIcon fontSize="large" />
+        </IconButton>
+      )}
+
       <Box sx={{ display: 'flex', alignItems: 'baseline', mb: 1 }}>
         {/* Main catalog title */}
         <Typography 
@@ -141,6 +232,7 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBotto
       </Box>
       
       <Box 
+        ref={scrollContainerRef}
         sx={{
           display: 'flex',
           overflowX: 'auto',

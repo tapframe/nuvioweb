@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Box, CircularProgress, Typography, Alert } from '@mui/material';
 import Hero from '../components/Hero';
 import MediaRow from '../components/MediaRow';
@@ -67,6 +67,42 @@ interface HomepageCatalogRow {
 }
 // --- End Shared Types ---
 
+const HOMEPAGE_CATALOGS_CACHE_KEY = 'homepageCatalogsCache';
+const HOMEPAGE_CONFIG_SIGNATURE_KEY = 'homepageConfigSignature';
+
+// Re-import or define InstalledAddon if not already in scope
+// Assuming InstalledAddon is similar to this, adjust if necessary:
+interface AddonCatalogSignature {
+  type: string;
+  id: string;
+  name?: string;
+}
+interface InstalledAddonSignature extends AddonManifestSignature {
+  manifestUrl: string;
+  selectedCatalogIds?: string[];
+}
+interface AddonManifestSignature {
+  id: string;
+  version: string;
+  name: string;
+  description?: string;
+  catalogs?: AddonCatalogSignature[];
+  resources?: (string | { name: string; types?: string[]; idPrefixes?: string[] })[];
+  types?: string[];
+}
+
+// Helper to generate a signature for the current data-fetching configuration
+const generateConfigSignature = (
+  apiKey: string | null, 
+  tmdbEnabled: boolean, 
+  addons: InstalledAddonSignature[] | null | undefined // Use the specific type
+): string => {
+  const addonSignature = addons?.map((a: InstalledAddonSignature) => ({ 
+    id: a.id, 
+    selected: a.selectedCatalogIds?.sort().join(',') 
+  })).sort((x: {id: string}, y: {id: string}) => x.id.localeCompare(y.id)) || [];
+  return JSON.stringify({ apiKey, tmdbEnabled, addons: addonSignature });
+};
 
 export default function HomePage() {
   // Stremio Addon Context
@@ -87,6 +123,20 @@ export default function HomePage() {
   const [homepageCatalogs, setHomepageCatalogs] = useState<HomepageCatalogRow[]>([]);
   const [isLoadingPageData, setIsLoadingPageData] = useState<boolean>(true);
   const [pageError, setPageError] = useState<string | null>(null);
+
+  // Wrapped setHomepageCatalogs to also update sessionStorage
+  const setHomepageCatalogsWithCache = useCallback((data: HomepageCatalogRow[], currentSignature: string) => {
+    setHomepageCatalogs(data);
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.setItem(HOMEPAGE_CATALOGS_CACHE_KEY, JSON.stringify(data));
+        sessionStorage.setItem(HOMEPAGE_CONFIG_SIGNATURE_KEY, currentSignature);
+        console.log("HomePage: Saved to sessionStorage with signature:", currentSignature);
+      } catch (e) {
+        console.warn("HomePage: Failed to save homepage catalogs to sessionStorage", e);
+      }
+    }
+  }, []);
 
   const getStremioCatalogUniqueId = (catalog: StremioAddonCatalog) => `${catalog.type}/${catalog.id}`;
 
@@ -209,8 +259,9 @@ export default function HomePage() {
   const fetchTmdbHomepageCatalogs = async (apiKey: string) => {
     setIsLoadingPageData(true);
     setPageError(null);
-    setHomepageCatalogs([]);
     console.log("HomePage: Fetching catalogs from TMDB...");
+
+    const currentSignature = generateConfigSignature(apiKey, true, installedAddons);
 
     const tmdbCatalogsToFetch = [
       { id: 'trending_movies_week', endpoint: '/trending/movie/week', title: 'Trending Movies', type: 'movie' as const },
@@ -256,7 +307,9 @@ export default function HomePage() {
       
       // Simple sort for TMDB rows, can be customized
       fetchedTmdbRows.sort((a,b) => a.title.localeCompare(b.title));
-      setHomepageCatalogs(fetchedTmdbRows); // Initial render with empty imageURLs for TMDB items
+      // setHomepageCatalogs(fetchedTmdbRows); // Initial render with empty imageURLs for TMDB items
+      // Update state AND cache for initial TMDB rows (without enhanced images yet)
+      setHomepageCatalogsWithCache(fetchedTmdbRows, currentSignature);
 
       // New function to process enhancement of all TMDB rows concurrently
       const enhanceTmdbRowsConcurrently = async (initialRows: HomepageCatalogRow[], apiKeyToUse: string) => {
@@ -337,7 +390,9 @@ export default function HomePage() {
         });
 
         const allEnhancedOrOriginalRows = await Promise.all(rowEnhancementPromises);
-        setHomepageCatalogs(allEnhancedOrOriginalRows); // Single state update with all images populated
+        // setHomepageCatalogs(allEnhancedOrOriginalRows); // Single state update with all images populated
+        // Update state AND cache after TMDB rows are enhanced
+        setHomepageCatalogsWithCache(allEnhancedOrOriginalRows, currentSignature);
       };
       
       // Start the enhancement process if there are TMDB rows
@@ -365,7 +420,12 @@ export default function HomePage() {
   const fetchStremioHomepageCatalogs = async () => {
     if (!installedAddons || installedAddons.length === 0) {
       console.log("HomePage: No addons installed or loaded yet for Stremio fetching.");
-      setHomepageCatalogs([]);
+      if (typeof window !== 'undefined') { // Clear cache if no addons
+        sessionStorage.removeItem(HOMEPAGE_CATALOGS_CACHE_KEY);
+        sessionStorage.removeItem(HOMEPAGE_CONFIG_SIGNATURE_KEY);
+      }
+      setHomepageCatalogsWithCache([], generateConfigSignature(tmdbApiKey, isTmdbEnabled, installedAddons)); // Cache empty state
+
       // Only set error if TMDB isn't also an option or has failed
       if (!addonContextError) {
            setPageError("No Stremio addons are currently installed. Please visit the Addons page to install some, or configure TMDB.");
@@ -379,6 +439,8 @@ export default function HomePage() {
     console.log("HomePage: Fetching catalogs from Stremio Addons...");
     let allFetchedStremioRows: HomepageCatalogRow[] = [];
     const fetchPromises: Promise<void>[] = [];
+
+    const currentSignature = generateConfigSignature(null, false, installedAddons);
 
     installedAddons.forEach(addon => {
       const addonSelectedCatalogs = addon.catalogs?.filter(catalog => 
@@ -442,7 +504,8 @@ export default function HomePage() {
     try {
       await Promise.all(fetchPromises);
       allFetchedStremioRows.sort((a, b) => a.title.localeCompare(b.title));
-      setHomepageCatalogs(allFetchedStremioRows);
+      // setHomepageCatalogs(allFetchedStremioRows);
+      setHomepageCatalogsWithCache(allFetchedStremioRows, currentSignature);
 
       if (allFetchedStremioRows.length === 0 && installedAddons.some(a => a.selectedCatalogIds && a.selectedCatalogIds.length > 0)) {
           setPageError("No content could be loaded from the selected Stremio addon catalogs. Check addon configurations or CORS issues.");
@@ -465,8 +528,40 @@ export default function HomePage() {
         setPageError(`Addon loading error: ${addonContextError}`);
     }
 
+    // Try to load from cache first
+    if (typeof window !== 'undefined') {
+      const cachedDataString = sessionStorage.getItem(HOMEPAGE_CATALOGS_CACHE_KEY);
+      const cachedSignature = sessionStorage.getItem(HOMEPAGE_CONFIG_SIGNATURE_KEY);
+      const currentSignature = generateConfigSignature(tmdbApiKey, isTmdbEnabled, installedAddons);
+
+      if (cachedDataString && cachedSignature && cachedSignature === currentSignature) {
+        try {
+          const cachedData = JSON.parse(cachedDataString);
+          if (cachedData && Array.isArray(cachedData)) {
+            setHomepageCatalogs(cachedData);
+            setIsLoadingPageData(false);
+            console.log("HomePage: Loaded catalogs from sessionStorage (signature match).");
+            return; // Exit early as data is loaded from cache
+          }
+        } catch (e) {
+          console.warn("HomePage: Failed to parse cached homepage catalogs, will re-fetch.", e);
+          sessionStorage.removeItem(HOMEPAGE_CATALOGS_CACHE_KEY);
+          sessionStorage.removeItem(HOMEPAGE_CONFIG_SIGNATURE_KEY);
+        }
+      } else if (cachedDataString || cachedSignature) {
+        // If cache exists but signature doesn't match or is missing, it's stale.
+        console.log("HomePage: Cache signature mismatch or missing. Invalidating cache.");
+        sessionStorage.removeItem(HOMEPAGE_CATALOGS_CACHE_KEY);
+        sessionStorage.removeItem(HOMEPAGE_CONFIG_SIGNATURE_KEY);
+      }
+    }
+
     // Decide whether to fetch from TMDB or Stremio Addons
     if (!isLoadingTmdbKey && !isLoadingAddons) { // Wait until *both* contexts have loaded their initial state
+      // Clear previous page error before attempting a new fetch
+      setPageError(null);
+      const currentSignature = generateConfigSignature(tmdbApiKey, isTmdbEnabled, installedAddons);
+
       if (tmdbApiKey && isTmdbEnabled) { // Check for API Key AND enabled status
         console.log("HomePage: TMDB API Key found and integration enabled. Fetching from TMDB.");
         fetchTmdbHomepageCatalogs(tmdbApiKey);
@@ -481,7 +576,7 @@ export default function HomePage() {
         setIsLoadingPageData(true); // Show loading while waiting for contexts
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tmdbApiKey, isTmdbEnabled, isLoadingTmdbKey, installedAddons, isLoadingAddons, addonContextError]); // Added isTmdbEnabled dependency
+  }, [tmdbApiKey, isTmdbEnabled, isLoadingTmdbKey, installedAddons, isLoadingAddons, addonContextError, setHomepageCatalogsWithCache]); // Added setHomepageCatalogsWithCache and useCallback
 
 
   // Combined loading state for UI
