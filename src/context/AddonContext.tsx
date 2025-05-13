@@ -33,6 +33,8 @@ interface AddonContextType {
   uninstallAddon: (manifestUrl: string) => void;
   toggleCatalogSelection: (addonManifestUrl: string, catalogId: string) => void;
   getAddonById: (id: string) => InstalledAddon | undefined;
+  installSampleAddon: () => Promise<void>;
+  isStreamingAddon: (addon: InstalledAddon) => boolean;
 }
 
 const AddonContext = createContext<AddonContextType | undefined>(undefined);
@@ -58,7 +60,19 @@ export const AddonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   useEffect(() => {
     setIsLoading(true);
     try {
-      const storedAddonsJson = localStorage.getItem(ADDONS_STORAGE_KEY);
+      // First try loading from our new storage key
+      let storedAddonsJson = localStorage.getItem(ADDONS_STORAGE_KEY);
+      
+      // If no data in new key, try loading from the original key
+      if (!storedAddonsJson) {
+        console.log('AddonContext: No data in new storage key, trying original key');
+        storedAddonsJson = localStorage.getItem('installedAddons');
+        
+        if (storedAddonsJson) {
+          console.log('AddonContext: Successfully loaded data from original key');
+        }
+      }
+      
       const loadedAddons: InstalledAddon[] = storedAddonsJson ? JSON.parse(storedAddonsJson) : [];
 
       // Process addons (ensure selectedCatalogIds exists)
@@ -68,7 +82,7 @@ export const AddonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }));
       setInstalledAddons(processedAddons);
 
-      // Removed TMDB key loading
+      console.log('AddonContext: Loaded', processedAddons.length, 'addons from storage');
       setError(null);
     } catch (e) {
       console.error("AddonContext: Error loading addons:", e);
@@ -82,14 +96,20 @@ export const AddonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // Save addons to local storage whenever they change
   useEffect(() => {
     if (!isLoading) {
-        try {
-            localStorage.setItem(ADDONS_STORAGE_KEY, JSON.stringify(installedAddons));
-        } catch (e) {
-            console.error("AddonContext: Error saving addons:", e);
-            setError('Error saving addon preferences.');
-        }
+      try {
+        // Save to our new storage key
+        localStorage.setItem(ADDONS_STORAGE_KEY, JSON.stringify(installedAddons));
+        
+        // Also save to the original 'installedAddons' key for backward compatibility
+        localStorage.setItem('installedAddons', JSON.stringify(installedAddons));
+        
+        console.log('AddonContext: Saved', installedAddons.length, 'addons to localStorage');
+      } catch (e) {
+        console.error("AddonContext: Error saving addons:", e);
+        setError('Error saving addon preferences.');
+      }
     }
-  }, [installedAddons, isLoading]); // Removed tmdbApiKey from dependency array
+  }, [installedAddons, isLoading]);
 
   const installAddon = useCallback(async (manifestUrl: string) => {
     setError(null);
@@ -143,7 +163,33 @@ export const AddonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return installedAddons.find(addon => addon.id === id);
   }, [installedAddons]);
 
+  const isStreamingAddon = useCallback((addon: InstalledAddon): boolean => {
+    if (!addon.resources) return false;
+    return addon.resources.some(resource => {
+      if (typeof resource === 'string') {
+        return resource === 'stream';
+      }
+      return resource.name === 'stream' && 
+             (Array.isArray(resource.types) && (resource.types.includes('movie') || resource.types.includes('series')));
+    });
+  }, []);
+
   // Removed TMDB API Key Setter function
+
+  // Method to install a sample addon for demonstration
+  const installSampleAddon = useCallback(async () => {
+    setError(null);
+    try {
+      // URL to a sample addon manifest - replace with an actual sample addon
+      const sampleManifestUrl = "https://v3-cinemeta.strem.io/manifest.json";
+      
+      console.log("Installing sample addon (Cinemeta)...");
+      await installAddon(sampleManifestUrl);
+    } catch (err: any) {
+      console.error("Failed to install sample addon:", err);
+      setError(`Sample addon installation failed: ${err.message}`);
+    }
+  }, [installAddon]);
 
   const value = {
     installedAddons,
@@ -153,7 +199,8 @@ export const AddonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     uninstallAddon,
     toggleCatalogSelection,
     getAddonById,
-    // Removed tmdbApiKey and setTmdbApiKey from value
+    installSampleAddon,
+    isStreamingAddon,
   };
 
   return <AddonContext.Provider value={value}>{children}</AddonContext.Provider>;

@@ -29,10 +29,11 @@ import CloseIcon from '@mui/icons-material/Close';
 import { TransitionProps } from '@mui/material/transitions';
 import Collapse from '@mui/material/Collapse';
 import { useTmdbContext } from '@/context/TmdbContext'; // Import TMDB context
-import Chip from '@mui/material/Chip';
-import BoltIcon from '@mui/icons-material/Bolt';
-import InfoIcon from '@mui/icons-material/Info';
-import FilterListIcon from '@mui/icons-material/FilterList';
+import dynamic from 'next/dynamic';
+import { useAddonContext } from '@/context/AddonContext'; // Import AddonContext
+
+// Import VideoPlayerWrapper with SSR disabled (was VideoPlayer)
+const VideoPlayerWrapper = dynamic(() => import('./VideoPlayerWrapper'), { ssr: false });
 
 // Interfaces (Copied from stream page)
 interface Stream {
@@ -109,8 +110,31 @@ export default function StreamDialog({
   const [error, setError] = useState<string | null>(null);
   const [selectedAddon, setSelectedAddon] = useState<string | null>(null);
   const [conversionError, setConversionError] = useState<string | null>(null); // For ID conversion errors
+  const [selectedStream, setSelectedStream] = useState<Stream | null>(null); // New state for the selected stream
 
   const { tmdbApiKey } = useTmdbContext(); // Get TMDB API key
+  const { 
+    installedAddons, 
+    isLoading: addonsLoading, 
+    isStreamingAddon,  // Get the new helper
+    installSampleAddon // Get the sample addon installer
+  } = useAddonContext(); // Get addons from context
+
+  // Log when component renders with current addon state
+  useEffect(() => {
+    console.log('StreamDialog: Component rendered with addons:', 
+      addonsLoading ? 'loading...' : `${installedAddons?.length || 0} addons loaded`);
+    
+    // Check localStorage directly for debugging
+    try {
+      const storedAddons = localStorage.getItem('installedAddons');
+      const parsedAddons = storedAddons ? JSON.parse(storedAddons) : [];
+      console.log('StreamDialog: Direct localStorage check -', 
+        storedAddons ? `found ${parsedAddons.length} addons` : 'no addons in localStorage');
+    } catch (e) {
+      console.error('StreamDialog: Error checking localStorage:', e);
+    }
+  }, [addonsLoading, installedAddons]);
 
   // Function to convert TMDB ID to IMDb ID
   const fetchImdbIdFromTmdb = useCallback(async (tmdbNumericId: string, type: 'movie' | 'series'): Promise<string | null> => {
@@ -154,14 +178,20 @@ export default function StreamDialog({
     setConversionError(null); // Reset conversion error
 
     try {
-      const storedData = localStorage.getItem('installedAddons');
-      if (!storedData) {
-        throw new Error('No addons installed');
+      if (addonsLoading) {
+        console.log('StreamDialog: Waiting for addons to load from context...');
+        return;
       }
 
-      const loadedAddons = JSON.parse(storedData);
-      if (loadedAddons.length === 0) {
-        throw new Error('No addons installed');
+      const streamingAddons = installedAddons.filter(isStreamingAddon);
+
+      if (!streamingAddons || streamingAddons.length === 0) {
+        setError(
+          'No streaming-capable addons installed. Please go to the Addons page and install an addon that provides streams (e.g., Torrentio, Orion, or a community addon that supports streams).'
+        );
+        // Offer to install sample (Cinemeta is a catalog addon, not a streaming one, so we need a real streaming example or remove this specific suggestion for now)
+        // For now, let's just show the error and the button to the addons page.
+        return;
       }
 
       // Build the video ID based on type, ID, and optional season/episode
@@ -174,8 +204,8 @@ export default function StreamDialog({
       const fetchPromises: Promise<void>[] = [];
       let anAddonWasAttempted = false;
 
-      // For each addon, try to fetch streams
-      for (const addon of loadedAddons) {
+      // For each STREAMING addon, try to fetch streams
+      for (const addon of streamingAddons) { // Use filtered list
         anAddonWasAttempted = true;
         let idForAddon = contentId;
         let videoIdForUrl = contentId; // This will include season/episode for series
@@ -219,11 +249,12 @@ export default function StreamDialog({
                 return;
               }
               const data = await response.json() as StreamResponse;
+              console.log(`StreamDialog: Raw response from ${addon.name} for ID ${videoIdForUrl}:`, data); // Log the entire response
 
               if (data && Array.isArray(data.streams) && data.streams.length > 0) {
                 // Process and add streams
                 const processedStreams = data.streams.map(stream => {
-                  console.log(`StreamDialog: Original stream object from ${addon.name}:`, JSON.parse(JSON.stringify(stream)));
+                  console.log(`StreamDialog: Original stream object from ${addon.name}:`, JSON.parse(JSON.stringify(stream))); // Log original stream before enhancement
 
                   let enhancedStream: Stream = {
                     ...stream, // Start with the original stream object
@@ -454,7 +485,7 @@ export default function StreamDialog({
     } finally {
       setLoading(false);
     }
-  }, [open, contentType, contentId, season, episode, initialAddonId, fetchImdbIdFromTmdb, conversionError, error]);
+  }, [open, contentType, contentId, season, episode, initialAddonId, fetchImdbIdFromTmdb, installedAddons, addonsLoading, isStreamingAddon]);
 
   // Trigger fetch when dialog opens or parameters change
   useEffect(() => {
@@ -466,17 +497,22 @@ export default function StreamDialog({
       setLoading(false);
       setError(null);
       setSelectedAddon(null);
+      setSelectedStream(null);
     }
-  }, [open, fetchStreams]);
+  }, [open, fetchStreams, addonsLoading]);
 
   // Handle stream selection
   const handleStreamSelect = (stream: Stream) => {
     if (stream.externalUrl) {
       window.open(stream.externalUrl, '_blank');
-    } else if (stream.url) {
-      window.open(stream.url, '_blank');
+    } else {
+      setSelectedStream(stream);
     }
-    onClose(); // Close dialog after selection
+  };
+
+  // Handle player close
+  const handlePlayerClose = () => {
+    setSelectedStream(null);
   };
 
   // Handle addon filter change
@@ -486,18 +522,11 @@ export default function StreamDialog({
 
   // Get quality icon based on stream
   const getQualityIcon = (stream: Stream) => {
-    const quality = stream.quality?.toLowerCase() || '';
-    const resolution = stream.resolution?.toLowerCase() || '';
-
-    if (quality.includes('1080') || resolution.includes('1080')) {
-      return <HdIcon fontSize="small" />;
-    } else if (quality.includes('720') || resolution.includes('720') || quality.includes('hd')) {
-      return <HdIcon fontSize="small" />;
-    } else if (quality.includes('480') || resolution.includes('480') || quality.includes('sd')) {
-      return <SdIcon fontSize="small" />;
-    } else {
-      return <VideocamIcon fontSize="small" />;
+    // Only return PublicIcon for external streams, otherwise null
+    if (stream.external) {
+      return <PublicIcon fontSize="small" />;
     }
+    return null; 
   };
 
   // Filter streams by selected addon
@@ -508,281 +537,254 @@ export default function StreamDialog({
   // Get unique addons that have streams
   const availableAddons = [...new Set(streams.map(stream => stream.addon))];
 
+  // Conditional rendering: Player view or Stream list view
+  if (selectedStream) {
+    return (
+      <Dialog 
+        fullScreen 
+        open={!!selectedStream} // Controlled by selectedStream presence
+        onClose={handlePlayerClose} 
+        TransitionComponent={TransitionComponent}
+        keepMounted={keepMounted} // Keep player mounted if specified by parent
+        PaperProps={{ sx: { backgroundColor: 'black' } }}
+      >
+        <VideoPlayerWrapper
+          url={selectedStream.url} 
+          title={selectedStream.title || selectedStream.name || contentName}
+          quality={selectedStream.quality || selectedStream.resolution || ''}
+          addonName={selectedStream.addonName}
+          onClose={handlePlayerClose} 
+          autoPlay={true}
+          // useStremio prop defaults to true in VideoPlayerWrapper
+        />
+      </Dialog>
+    );
+  }
+
+  // Default view: Stream selection list
   return (
     <Dialog 
       open={open} 
-      onClose={onClose} 
-      maxWidth="md" 
-      fullWidth
+      onClose={onClose} // Main dialog close
       TransitionComponent={TransitionComponent}
+      fullWidth
+      maxWidth="md"
       keepMounted={keepMounted}
       PaperProps={{
         sx: {
-          backgroundColor: '#222', // Dark background for dialog
+          bgcolor: '#141414',
           color: 'white',
-        },
+          height: '90vh', // Set a max height for the dialog
+          maxHeight: '700px',
+          width: '95vw',
+          maxWidth: '800px',
+          borderRadius: '8px',
+          display: 'flex', // Enable flex column layout
+          flexDirection: 'column'
+        }
       }}
     >
-      <DialogTitle sx={{ m: 0, p: 2, bgcolor: '#181818' }}>
-        <Typography variant="h6" component="div" sx={{ fontWeight: 'bold' }}>
-          {contentName}
-        </Typography>
-        {episodeInfo && (
-          <Typography variant="body2" sx={{ color: 'grey.400' }}>
-            {episodeInfo}
-          </Typography>
-        )}
-        <IconButton
-          aria-label="close"
-          onClick={onClose}
-          sx={{
-            position: 'absolute',
-            right: 8,
-            top: 8,
-            color: (theme) => theme.palette.grey[500],
-          }}
-        >
-          <CloseIcon />
-        </IconButton>
-      </DialogTitle>
-
-      <DialogContent dividers sx={{ bgcolor: '#141414', p: { xs: 2, md: 3 }, position: 'relative', minHeight: '150px' }}>
-        {/* Loading indicator */}
-        {loading && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}>
-            <CircularProgress color="inherit" />
-          </Box>
-        )}
-
-        {/* Content that appears after loading - wrapped in Collapse */}
-        <Collapse in={!loading} timeout="auto" unmountOnExit> 
-          {error || conversionError ? (
-            // Error Alert
-            <Alert
-              severity="warning"
+      <DialogTitle sx={{ m: 0, p: 2, bgcolor: '#181818', flexShrink: 0 /* Prevent title from shrinking */ }}>
+            <Typography variant="h6" component="div" sx={{ fontWeight: 'bold' }}>
+              {contentName}
+            </Typography>
+            {episodeInfo && (
+              <Typography variant="body2" sx={{ color: 'grey.400' }}>
+                {episodeInfo}
+              </Typography>
+            )}
+            <IconButton
+              aria-label="close"
+              onClick={onClose}
               sx={{
-                backgroundColor: '#333',
-                color: 'white',
-                '.MuiAlert-icon': { color: 'white' },
-                minHeight: '100px',
-                display: 'flex',
-                alignItems: 'center'
+                position: 'absolute',
+                right: 8,
+                top: 8,
+                color: (theme) => theme.palette.grey[500],
               }}
             >
-              {error || conversionError}
-            </Alert>
-          ) : (
-            // Streams List and Filter
-            <>
-              {/* Addon filter */}
-              {availableAddons.length > 1 && (
-                <Box sx={{ mb: 3, maxWidth: '300px' }}>
-                  <FormControl fullWidth variant="filled" size="small">
-                    <InputLabel id="addon-select-label" sx={{ color: 'grey.300' }}>
-                      Addon Source
-                    </InputLabel>
-                    <Select
-                      labelId="addon-select-label"
-                      value={selectedAddon || ''}
-                      onChange={handleAddonChange}
-                      label="Addon Source"
-                      sx={{
-                        color: 'white',
-                        backgroundColor: 'rgba(255,255,255,0.08)',
-                        '&:hover': { backgroundColor: 'rgba(255,255,255,0.12)' },
-                        '.MuiFilledInput-input': { py: 1.5 },
-                        '.MuiSvgIcon-root': { color: 'white' }
+              <CloseIcon />
+            </IconButton>
+          </DialogTitle>
+
+      <DialogContent dividers sx={{ bgcolor: '#141414', p: { xs: 1.5, sm: 2, md: 3 }, position: 'relative', flexGrow: 1 /* Allow content to grow */, overflowY: 'auto' /* Ensure content scrolls */ }}>
+            {/* Loading indicator */}
+            {loading && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+                <CircularProgress color="inherit" />
+              </Box>
+            )}
+
+            <Collapse in={!loading} timeout="auto" unmountOnExit> 
+              {error || conversionError ? (
+                <Alert
+                  severity="warning"
+                  sx={{
+                    backgroundColor: '#333',
+                    color: 'white',
+                    '.MuiAlert-icon': { color: 'white' },
+                    minHeight: '100px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start'
+                  }}
+                >
+                  <Typography sx={{ mb: 1 }}>{error || conversionError}</Typography>
+                  {error?.includes('No streaming-capable addons installed') && (
+                    <Button 
+                      color="primary" 
+                      size="small" 
+                      variant="outlined"
+                      onClick={() => {
+                    onClose(); // Close the dialog first
+                    window.location.href = '/addons'; // Navigate
                       }}
-                      disableUnderline
+                      sx={{ mt: 1 }}
                     >
-                      {availableAddons.map(addonId => {
-                        const addonName = streams.find(s => s.addon === addonId)?.addonName || addonId;
-                        return (
-                          <MenuItem key={addonId} value={addonId} sx={{ bgcolor: '#333', '&:hover': { bgcolor: '#444' } }}>
-                            {addonName}
-                          </MenuItem>
-                        );
-                      })}
-                    </Select>
-                  </FormControl>
-                </Box>
-              )}
-
-              {/* Streams list Title */}
-              <Typography variant="body1" component="h3" sx={{ mb: 1.5, fontWeight: 'medium', color: 'grey.300' }}>
-                Available Streams {filteredStreams.length > 0 && `(${filteredStreams.length})`}
-              </Typography>
-
-              {/* Streams List or "Not Found" message */}
-              {filteredStreams.length > 0 ? (
-                <List sx={{ p: 0, bgcolor: 'rgba(0,0,0,0.2)', borderRadius: '4px', overflow: 'hidden' }}>
-                  {filteredStreams.map((stream, index) => (
-                    <React.Fragment key={`${stream.addon}-${index}`}>
-                      {index > 0 && <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)' }} />}
-                      <ListItem
-                        component="div"
-                        onClick={() => handleStreamSelect(stream)}
-                        sx={{
-                          cursor: 'pointer',
-                          '&:hover': { backgroundColor: 'rgba(255,255,255,0.08)' },
-                          py: 1.5
-                        }}
-                      >
-                        <ListItemIcon sx={{ color: 'white', minWidth: '40px' }}>
-                          {stream.external ? <PublicIcon fontSize="small" /> : getQualityIcon(stream)}
-                        </ListItemIcon>
-                        <ListItemText
-                          primary={
-                            <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
-                              {stream.title || stream.name || `Stream ${index + 1}`}
-                            </Typography>
-                          }
-                          secondary={
-                            <Box component="div" sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, color: 'grey.400', fontSize: '0.8rem', mt: 0.5 }}>
-                              <Box component="div" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-                                {/* Quality/Resolution */}
-                                {(stream.resolution || stream.quality) && (
-                                  <Chip 
-                                    label={stream.resolution || stream.quality} 
-                                    size="small" 
-                                    sx={{ 
-                                      height: 20, 
-                                      fontSize: '0.7rem', 
-                                      bgcolor: 'rgba(255,255,255,0.1)', 
-                                      color: 'white' 
-                                    }} 
-                                  />
-                                )}
-                                {/* File Size */}
-                                {stream.size && (
-                                  <Chip 
-                                    label={stream.size} 
-                                    size="small" 
-                                    sx={{ 
-                                      height: 20, 
-                                      fontSize: '0.7rem', 
-                                      bgcolor: 'rgba(255,255,255,0.1)', 
-                                      color: 'white' 
-                                    }} 
-                                  />
-                                )}
-                                {/* Source Tag (RD, PM, AD) */}
-                                {stream.source && (
-                                   <Chip 
-                                    label={stream.source} 
-                                    size="small" 
-                                    icon={stream.source === 'RD' ? <BoltIcon sx={{ fontSize: 12, color: '#ffc107' }} /> : undefined}
-                                    sx={{ 
-                                      height: 20, 
-                                      fontSize: '0.7rem', 
-                                      bgcolor: stream.source === 'RD' ? 'rgba(255,193,7,0.2)' : 'rgba(255,255,255,0.1)', 
-                                      color: stream.source === 'RD' ? '#ffc107' : 'white',
-                                      '& .MuiChip-icon': { ml: '5px', mr: '-2px'}
-                                    }} 
-                                  />
-                                )}
-                                 {/* HDR/DV indicators */}
-                                 {stream.hdr && (
-                                   <Chip 
-                                     label={stream.dv ? "DV" : "HDR"} 
-                                     size="small" 
-                                     sx={{ 
-                                       height: 20, 
-                                       fontSize: '0.7rem', 
-                                       bgcolor: stream.dv ? 'rgba(126,87,194,0.2)' : 'rgba(255,160,0,0.2)', // Purple for DV, Orange for HDR
-                                       color: stream.dv ? '#7e57c2' : '#ffa000' 
-                                     }} 
-                                   />
-                                 )}
-                                 {/* 10bit indicator */}
-                                 {stream.is10bit && (
-                                   <Chip 
-                                     label="10bit" 
-                                     size="small" 
-                                     sx={{ 
-                                       height: 20, 
-                                       fontSize: '0.7rem', 
-                                       bgcolor: 'rgba(0,150,136,0.2)', // Teal for 10bit
-                                       color: '#009688' 
-                                     }} 
-                                   />
-                                 )}
-                              </Box>
-                              <Box component="div" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center', mt: 0.5 }}>
-                                {/* Format (BluRay, WEB-DL) */}
-                                {stream.format && (
-                                  <Typography variant="caption" sx={{ color: 'grey.500' }}>{stream.format}</Typography>
-                                )}
-                                {/* Codec (HEVC, H264) */}
-                                {stream.codec && (
-                                  <Typography variant="caption" sx={{ color: 'grey.500' }}>{stream.codec}</Typography>
-                                )}
-                                {/* Audio (Atmos, DTS) */}
-                                {stream.audio && (
-                                  <Typography variant="caption" sx={{ color: 'grey.500' }}>{stream.audio}</Typography>
-                                )}
-                                {/* Language */}
-                                {stream.language && (
-                                  <Typography variant="caption" sx={{ color: 'grey.500' }}>{stream.language}</Typography>
-                                )}
-                              </Box>
-                              <Typography variant="caption" sx={{ color: 'grey.600', fontSize: '0.7rem', mt: 0.5 }}>
-                                via {stream.addonName} {stream.release_group && `| ${stream.release_group}`}
-                              </Typography>
-                              {/* Cached Info Display */}
-                              {stream.cachedInfo && (
-                                <Typography variant="caption" sx={{ color: '#4caf50', fontSize: '0.7rem', mt: 0.5, display: 'block' }}>
-                                  {stream.cachedInfo}
-                                </Typography>
-                              )}
-                              {/* Full Description Display */}
-                              {stream.description && (
-                                <Typography 
-                                  variant="caption" 
-                                  component="pre" // Use <pre> to preserve whitespace and line breaks
-                                  sx={{ 
-                                    color: 'grey.500', 
-                                    fontSize: '0.65rem', 
-                                    mt: 0.8, 
-                                    display: 'block', 
-                                    whiteSpace: 'pre-wrap', // Ensure wrapping
-                                    wordBreak: 'break-word'  // Ensure long words break
-                                  }}
-                                >
-                                  {stream.description}
-                                </Typography>
-                              )}
-                            </Box>
-                          }
-                          secondaryTypographyProps={{ component: 'div' }}
-                        />
-                        <ListItemIcon sx={{ color: '#e50914', minWidth: '30px' }}>
-                          <PlayArrowIcon fontSize="small" />
-                        </ListItemIcon>
-                      </ListItem>
-                    </React.Fragment>
-                  ))}
-                </List>
+                      Go to Addons Page
+                    </Button>
+                  )}
+                </Alert>
               ) : (
-                <Typography variant="body2" sx={{ color: 'grey.400', textAlign: 'center', py: 2 }}>
-                  {streams.length > 0 ? 'No streams available from this addon' : 'No streams found'}
-                </Typography>
-              )}
-              
-               {/* Hint text */}
-               <Typography variant="caption" sx={{ display: 'block', color: 'grey.500', fontStyle: 'italic', textAlign: 'center', mt: 2 }}>
-                  Clicking on a stream may open an external player or website.
-               </Typography>
-            </>
-          )}
-        </Collapse>
-      </DialogContent>
+                <>
+                  {availableAddons.length > 1 && (
+                <Box sx={{ mb: 2, maxWidth: { xs: '100%', sm: '300px' } }}>
+                      <FormControl fullWidth variant="filled" size="small">
+                        <InputLabel id="addon-select-label" sx={{ color: 'grey.300' }}>
+                          Addon Source
+                        </InputLabel>
+                        <Select
+                          labelId="addon-select-label"
+                          value={selectedAddon || ''}
+                          onChange={handleAddonChange}
+                          label="Addon Source"
+                          sx={{
+                            color: 'white',
+                            backgroundColor: 'rgba(255,255,255,0.08)',
+                            '&:hover': { backgroundColor: 'rgba(255,255,255,0.12)' },
+                            '.MuiFilledInput-input': { py: 1.5 },
+                            '.MuiSvgIcon-root': { color: 'white' }
+                          }}
+                          disableUnderline
+                        >
+                          {availableAddons.map(addonId => {
+                        const addonInfo = installedAddons.find(ad => ad.id === addonId);
+                        const addonName = addonInfo?.name || streams.find(s => s.addon === addonId)?.addonName || addonId;
+                            return (
+                              <MenuItem key={addonId} value={addonId} sx={{ bgcolor: '#333', '&:hover': { bgcolor: '#444' } }}>
+                                {addonName}
+                              </MenuItem>
+                            );
+                          })}
+                        </Select>
+                      </FormControl>
+                    </Box>
+                  )}
 
-      <DialogActions sx={{ p: 1.5, bgcolor: '#181818' }}>
-        <Button onClick={onClose} sx={{ color: 'grey.400' }}>
-          Close
-        </Button>
-      </DialogActions>
+              <Typography variant="body2" component="h3" sx={{ mb: 1, fontWeight: 'medium', color: 'grey.300' }}>
+                    Available Streams {filteredStreams.length > 0 && `(${filteredStreams.length})`}
+                  </Typography>
+
+                  {filteredStreams.length > 0 ? (
+                <List sx={{ p: 0, bgcolor: 'rgba(0,0,0,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                      {filteredStreams.map((stream, index) => (
+                    <React.Fragment key={`${stream.addon}-${stream.url}-${index}`}> {/* Ensure key is unique enough */}
+                      {index > 0 && <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)' }} />}
+                          <ListItem
+                            component="div"
+                            onClick={() => handleStreamSelect(stream)}
+                            sx={{
+                              cursor: 'pointer',
+                          '&:hover': { backgroundColor: 'rgba(255,255,255,0.05)' },
+                          py: 1.2, 
+                          px: 1.5 
+                            }}
+                          >
+                            {stream.external && (
+                          <ListItemIcon sx={{ color: 'grey.400', minWidth: '36px' }}>
+                                <PublicIcon fontSize="small" />
+                              </ListItemIcon>
+                            )}
+                            <ListItemText
+                              primary={
+                            <Typography variant="body1" sx={{ color: 'grey.100' }}>
+                              {stream.title || stream.name || `Stream from ${stream.addonName}`}
+                                </Typography>
+                              }
+                              secondary={
+                            <Box component="span" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, color: 'grey.400', fontSize: '0.75rem', mt: 0.5 }}>
+                                  {stream.quality && (
+                                <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.07)', px: 0.8, py: 0.2, borderRadius: '3px' }}>
+                                      {stream.quality}
+                                    </Box>
+                                  )}
+                                  {stream.resolution && (
+                                <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.07)', px: 0.8, py: 0.2, borderRadius: '3px' }}>
+                                      {stream.resolution}
+                                    </Box>
+                                  )}
+                                  {stream.size && (
+                                <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.07)', px: 0.8, py: 0.2, borderRadius: '3px' }}>
+                                      {stream.size}
+                                    </Box>
+                                  )}
+                              <Box component="span" sx={{ opacity: 0.8 }}>
+                                    via {stream.addonName}
+                                  </Box>
+                                  {stream.cachedInfo && (
+                                <Typography variant="caption" sx={{ color: '#4caf50', fontSize: '0.7rem', display: 'inline-block', ml: 0.5 }}>
+                                  ({stream.cachedInfo})
+                                    </Typography>
+                                  )}
+                                  {stream.description && (
+                                    <Typography 
+                                      variant="caption" 
+                                  component="pre" 
+                                      sx={{ 
+                                        color: 'grey.500', 
+                                    fontSize: '0.6rem', 
+                                    mt: 0.5, 
+                                        display: 'block', 
+                                    whiteSpace: 'pre-wrap', 
+                                    wordBreak: 'break-word',
+                                    width: '100%' // Ensure it takes full width if needed
+                                      }}
+                                    >
+                                      {stream.description}
+                                    </Typography>
+                                  )}
+                                </Box>
+                              }
+                              secondaryTypographyProps={{ component: 'div' }}
+                            />
+                        <ListItemIcon sx={{ color: '#e50914', minWidth: 'auto', pl: 1 }}>
+                              <PlayArrowIcon fontSize="small" />
+                            </ListItemIcon>
+                          </ListItem>
+                        </React.Fragment>
+                      ))}
+                    </List>
+                  ) : (
+                <Typography variant="body2" sx={{ color: 'grey.400', textAlign: 'center', py: 3 }}>
+                  {loading ? 'Loading streams...' : (streams.length > 0 ? 'No streams available from this addon' : 'No streams found for this content.')}
+                    </Typography>
+                  )}
+                  
+              <Typography variant="caption" sx={{ display: 'block', color: 'grey.500', fontStyle: 'italic', textAlign: 'center', mt: 2, pb: 1 }}>
+                    {streams.some(s => s.external) 
+                  ? 'External links open in a new tab. Other streams play in the built-in player.' 
+                  : 'Click a stream to play in the built-in player.'}
+                  </Typography>
+                </>
+              )}
+            </Collapse>
+          </DialogContent>
+
+      <DialogActions sx={{ p: 1.5, bgcolor: '#181818', borderTop: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 /* Prevent actions from shrinking */ }}>
+            <Button onClick={onClose} sx={{ color: 'grey.400' }}>
+              Close
+            </Button>
+          </DialogActions>
     </Dialog>
   );
-} 
+}
