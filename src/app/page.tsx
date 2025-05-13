@@ -490,7 +490,7 @@ export default function HomePage() {
   return (
     <Box>
       <Hero />
-      <Box sx={{ py: 4, backgroundColor: '#141414' }}>
+      <Box sx={{ pb: 4, backgroundColor: '#141414' }}>
         {showLoadingIndicator && (
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
             <CircularProgress sx={{color: 'red'}} />

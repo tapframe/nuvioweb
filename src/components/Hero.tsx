@@ -475,7 +475,7 @@ const Hero: React.FC = () => {
             alignItems: 'flex-start',
             opacity: fadeIn ? 1 : 0,
             transition: 'opacity 0.5s ease-in-out',
-            mb: 5 // Add bottom margin to content for space from bottom of hero
+            mb: 0 // Add bottom margin to content for space from bottom of hero
           }}
         >
           {/* Title Logo - Using original logic */}
