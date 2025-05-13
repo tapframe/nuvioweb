@@ -29,12 +29,22 @@ import CloseIcon from '@mui/icons-material/Close';
 import { TransitionProps } from '@mui/material/transitions';
 import Collapse from '@mui/material/Collapse';
 import { useTmdbContext } from '@/context/TmdbContext'; // Import TMDB context
+import Chip from '@mui/material/Chip';
+import BoltIcon from '@mui/icons-material/Bolt';
+import InfoIcon from '@mui/icons-material/Info';
+import FilterListIcon from '@mui/icons-material/FilterList';
 
 // Interfaces (Copied from stream page)
 interface Stream {
   name: string;
   title?: string;
   url: string;
+  description?: string;
+  behaviorHints?: {
+    videoSize?: number;
+    filename?: string;
+    [key: string]: any;
+  };
   behindProxy?: boolean;
   external?: boolean;
   ytId?: string;
@@ -45,6 +55,15 @@ interface Stream {
   resolution?: string;
   size?: string;
   source?: string;
+  format?: string;
+  codec?: string;
+  audio?: string;
+  hdr?: boolean;
+  dv?: boolean;
+  language?: string;
+  release_group?: string;
+  is10bit?: boolean;      // Added for 10-bit video information
+  cachedInfo?: string;   // Added for caching provider information (e.g., "Cached on RD, AD")
 }
 
 interface StreamResponse {
@@ -203,11 +222,172 @@ export default function StreamDialog({
 
               if (data && Array.isArray(data.streams) && data.streams.length > 0) {
                 // Process and add streams
-                const processedStreams = data.streams.map(stream => ({
-                  ...stream,
-                  addon: addon.id,
-                  addonName: addon.name
-                }));
+                const processedStreams = data.streams.map(stream => {
+                  console.log(`StreamDialog: Original stream object from ${addon.name}:`, JSON.parse(JSON.stringify(stream)));
+
+                  let enhancedStream: Stream = {
+                    ...stream, // Start with the original stream object
+                    addon: addon.id,
+                    addonName: addon.name,
+                    // Initialize potentially missing fields to avoid issues later
+                    format: stream.format,
+                    codec: stream.codec,
+                    audio: stream.audio,
+                    hdr: !!stream.hdr, // Ensure boolean
+                    dv: !!stream.dv,   // Ensure boolean
+                    language: stream.language,
+                    release_group: stream.release_group,
+                    size: stream.size, // Will be overridden if behaviorHints.videoSize is present
+                    resolution: stream.resolution,
+                    source: stream.source,
+                    is10bit: !!stream.is10bit, // Initialize from stream object or ensure boolean
+                    cachedInfo: stream.cachedInfo // Initialize from stream object
+                  };
+
+                  // --- Start of new parsing logic ---
+
+                  // 1. Prioritize behaviorHints.videoSize for filesize
+                  if (stream.behaviorHints && stream.behaviorHints.videoSize && typeof stream.behaviorHints.videoSize === 'number') {
+                    const sizeInBytes = stream.behaviorHints.videoSize;
+                    if (sizeInBytes >= 1073741824) { // GB
+                      enhancedStream.size = `${(sizeInBytes / 1073741824).toFixed(2)} GB`;
+                    } else if (sizeInBytes >= 1048576) { // MB
+                      enhancedStream.size = `${(sizeInBytes / 1048576).toFixed(2)} MB`;
+                    } else if (sizeInBytes > 0) {
+                      enhancedStream.size = `${sizeInBytes} B`;
+                    }
+                  }
+
+                  // Combine filename (highest priority), description, title, and name for comprehensive parsing
+                  const filenameText = (stream.behaviorHints && stream.behaviorHints.filename) ? stream.behaviorHints.filename : '';
+                  const descriptionText = stream.description || '';
+                  const titleText = stream.title || '';
+                  const nameText = stream.name || '';
+                  
+                  // Give priority to filename, then description, then title, then name
+                  const sourceToParse = `${filenameText} ${descriptionText} ${titleText} ${nameText}`.toLowerCase();
+
+                  // Regex patterns (keeping them as they are for now, might need refinement)
+                  const formatPatterns = [
+                    { regex: /\b(bluray|blu-ray|bdrip|remux)\b/i, format: 'BluRay' }, // Added remux
+                    { regex: /\bweb-?dl\b/i, format: 'WEB-DL' },
+                    { regex: /\bhdtv\b/i, format: 'HDTV' },
+                    { regex: /\bdvdrip\b/i, format: 'DVDRip' },
+                    { regex: /\bwebrip\b/i, format: 'WEBRip' },
+                    { regex: /\bcam\b/i, format: 'CAM' },
+                  ];
+
+                  const codecPatterns = [
+                    { regex: /\b(hevc|h\.?265|x\.?265)\b/i, codec: 'HEVC' },
+                    { regex: /\b(avc|h\.?264|x\.?264)\b/i, codec: 'AVC' }, // Grouped H264/AVC
+                    { regex: /\bvp9\b/i, codec: 'VP9' },
+                    { regex: /\bav1\b/i, codec: 'AV1' },
+                  ];
+
+                  const audioPatterns = [
+                    { regex: /\batmos\b/i, audio: 'Atmos' },
+                    { regex: /\bdts-?hd(?:-?ma)?\b/i, audio: 'DTS-HD' }, // More specific DTS-HD
+                    { regex: /\bdts\b/i, audio: 'DTS' }, // General DTS
+                    { regex: /\bdolby\s*digital\s*plus\b|\bdd\+\b|\beac3\b/i, audio: 'DD+' },
+                    { regex: /\bdolby\s*digital\b|\bdd\b|\bac3\b/i, audio: 'DD' },
+                    { regex: /\b(?:5|7)\.1\b/i, audio: 'Surround' }, // General surround
+                    { regex: /\btrue\s*hd\b/i, audio: 'TrueHD' },
+                    { regex: /\baac\b/i, audio: 'AAC' },
+                  ];
+
+                  const hdrPatterns = [
+                    { regex: /\bhdr10\+\b/i, hdr: true, dv: false }, // HDR10+
+                    { regex: /\bhdr10\b/i, hdr: true, dv: false },  // HDR10
+                    { regex: /\bhdr\b/i, hdr: true, dv: false },     // Generic HDR
+                    { regex: /\bdv\b|\bdolby\s*vision\b/i, hdr: true, dv: true }, // Dolby Vision implies HDR
+                  ];
+                  
+                  const resolutionPatterns = [
+                    { regex: /\b(2160p|4k|ultra\s*hd)\b/i, resolution: '2160p' },
+                    { regex: /\b(1080p|full\s*hd)\b/i, resolution: '1080p' },
+                    { regex: /\b(720p|hd)\b/i, resolution: '720p' },
+                    { regex: /\b480p\b/i, resolution: '480p' },
+                  ];
+                  
+                  const languagePatterns = [
+                      { regex: /\b(eng|english)\b/i, language: 'English' },
+                      { regex: /\b(esp|spanish|espanol|latino)\b/i, language: 'Spanish' },
+                      { regex: /\b(fre|french|français)\b/i, language: 'French' },
+                      { regex: /\b(ger|german|deutsch)\b/i, language: 'German' },
+                      { regex: /\b(ita|italian)\b/i, language: 'Italian' },
+                      { regex: /\b(multi|dual\s*audio)\b/i, language: 'Multi Audio' },
+                  ];
+
+                  // Release group detection (often in square brackets or parentheses, or after a dash at the end)
+                  const releaseGroupRegex = /(?:\b|-)([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s*\.\w{2,4}$)|(?:\[|\()([a-z0-9\s-]+)(?:\]|\))/i;
+
+                  // Apply parsing if not already present or to refine existing data
+                  if (!enhancedStream.format) {
+                    for (const p of formatPatterns) if (p.regex.test(sourceToParse)) { enhancedStream.format = p.format; break; }
+                  }
+                  if (!enhancedStream.codec) {
+                    for (const p of codecPatterns) if (p.regex.test(sourceToParse)) { enhancedStream.codec = p.codec; break; }
+                  }
+                  if (!enhancedStream.audio) {
+                    for (const p of audioPatterns) if (p.regex.test(sourceToParse)) { enhancedStream.audio = p.audio; break; }
+                  }
+                  
+                  // HDR/DV - allow multiple matches if DV also sets HDR
+                  for (const p of hdrPatterns) {
+                      if (p.regex.test(sourceToParse)) {
+                          if (p.hdr) enhancedStream.hdr = true;
+                          if (p.dv) enhancedStream.dv = true;
+                          // Don't break, allow DV to also set HDR if a generic HDR was found first
+                      }
+                  }
+
+                  if (!enhancedStream.resolution) {
+                    for (const p of resolutionPatterns) if (p.regex.test(sourceToParse)) { enhancedStream.resolution = p.resolution; break; }
+                  }
+                  if (!enhancedStream.language) {
+                    for (const p of languagePatterns) if (p.regex.test(sourceToParse)) { enhancedStream.language = p.language; break; }
+                  }
+                  if (!enhancedStream.release_group) {
+                    const rgMatch = sourceToParse.match(releaseGroupRegex);
+                    if (rgMatch) {
+                      enhancedStream.release_group = (rgMatch[1] || rgMatch[2] || '').trim();
+                    }
+                  }
+                  
+                  // Special handling for 10bit from description/filename 
+                  if (!enhancedStream.is10bit && (sourceToParse.includes('10bit') || sourceToParse.includes('10-bit'))) {
+                    enhancedStream.is10bit = true;
+                  }
+
+                  // Extract caching information specifically from the original description if not already set
+                  if (!enhancedStream.cachedInfo && stream.description) {
+                    const cachedOnRegex = /cached on ([\w\s,&]+)/i;
+                    // Use stream.description directly here, not sourceToParse, to avoid lowercasing issues if provider names are case-sensitive
+                    const cachedMatch = stream.description.match(cachedOnRegex);
+                    if (cachedMatch && cachedMatch[1]) {
+                      enhancedStream.cachedInfo = `Cached on ${cachedMatch[1].trim()}`;
+                    }
+                  }
+                  
+                  // Identify source (RD, PM, AD) - this can be refined
+                  if (!enhancedStream.source) {
+                      if (addon.name.toLowerCase().includes('rd') || nameText.toLowerCase().includes('[rd') || descriptionText.toLowerCase().includes('[rd')) enhancedStream.source = 'RD';
+                      else if (addon.name.toLowerCase().includes('ad') || nameText.toLowerCase().includes('[ad') || descriptionText.toLowerCase().includes('[ad')) enhancedStream.source = 'AD';
+                      else if (addon.name.toLowerCase().includes('pm') || nameText.toLowerCase().includes('[pm') || descriptionText.toLowerCase().includes('[pm')) enhancedStream.source = 'PM';
+                  }
+
+                  // --- End of new parsing logic ---
+                  
+                  // Cleanup: if release_group is the same as addonName or a generic term, clear it
+                  if (enhancedStream.release_group && 
+                      (enhancedStream.release_group.toLowerCase() === enhancedStream.addonName.toLowerCase() || 
+                       enhancedStream.release_group.match(/^(english|spanish|multi)$/i))) {
+                    enhancedStream.release_group = undefined;
+                  }
+
+                  console.log('StreamDialog: Enhanced stream metadata:', enhancedStream);
+                  return enhancedStream;
+                });
 
                 allStreams.push(...processedStreams);
                 console.log(`Added ${processedStreams.length} streams from ${addon.name}`);
@@ -453,30 +633,125 @@ export default function StreamDialog({
                         </ListItemIcon>
                         <ListItemText
                           primary={
-                            <Typography variant="body1">
+                            <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
                               {stream.title || stream.name || `Stream ${index + 1}`}
                             </Typography>
                           }
                           secondary={
-                            <Box component="span" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, color: 'grey.400', fontSize: '0.8rem', mt: 0.5 }}>
-                              {stream.quality && (
-                                <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.1)', px: 1, borderRadius: '4px', fontSize: '0.7rem' }}>
-                                  {stream.quality}
-                                </Box>
-                              )}
-                              {stream.resolution && (
-                                <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.1)', px: 1, borderRadius: '4px', fontSize: '0.7rem' }}>
-                                  {stream.resolution}
-                                </Box>
-                              )}
-                              {stream.size && (
-                                <Box component="span" sx={{ bgcolor: 'rgba(255,255,255,0.1)', px: 1, borderRadius: '4px', fontSize: '0.7rem' }}>
-                                  {stream.size}
-                                </Box>
-                              )}
-                              <Box component="span" sx={{ fontSize: '0.7rem', opacity: 0.8 }}>
-                                via {stream.addonName}
+                            <Box component="div" sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, color: 'grey.400', fontSize: '0.8rem', mt: 0.5 }}>
+                              <Box component="div" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+                                {/* Quality/Resolution */}
+                                {(stream.resolution || stream.quality) && (
+                                  <Chip 
+                                    label={stream.resolution || stream.quality} 
+                                    size="small" 
+                                    sx={{ 
+                                      height: 20, 
+                                      fontSize: '0.7rem', 
+                                      bgcolor: 'rgba(255,255,255,0.1)', 
+                                      color: 'white' 
+                                    }} 
+                                  />
+                                )}
+                                {/* File Size */}
+                                {stream.size && (
+                                  <Chip 
+                                    label={stream.size} 
+                                    size="small" 
+                                    sx={{ 
+                                      height: 20, 
+                                      fontSize: '0.7rem', 
+                                      bgcolor: 'rgba(255,255,255,0.1)', 
+                                      color: 'white' 
+                                    }} 
+                                  />
+                                )}
+                                {/* Source Tag (RD, PM, AD) */}
+                                {stream.source && (
+                                   <Chip 
+                                    label={stream.source} 
+                                    size="small" 
+                                    icon={stream.source === 'RD' ? <BoltIcon sx={{ fontSize: 12, color: '#ffc107' }} /> : undefined}
+                                    sx={{ 
+                                      height: 20, 
+                                      fontSize: '0.7rem', 
+                                      bgcolor: stream.source === 'RD' ? 'rgba(255,193,7,0.2)' : 'rgba(255,255,255,0.1)', 
+                                      color: stream.source === 'RD' ? '#ffc107' : 'white',
+                                      '& .MuiChip-icon': { ml: '5px', mr: '-2px'}
+                                    }} 
+                                  />
+                                )}
+                                 {/* HDR/DV indicators */}
+                                 {stream.hdr && (
+                                   <Chip 
+                                     label={stream.dv ? "DV" : "HDR"} 
+                                     size="small" 
+                                     sx={{ 
+                                       height: 20, 
+                                       fontSize: '0.7rem', 
+                                       bgcolor: stream.dv ? 'rgba(126,87,194,0.2)' : 'rgba(255,160,0,0.2)', // Purple for DV, Orange for HDR
+                                       color: stream.dv ? '#7e57c2' : '#ffa000' 
+                                     }} 
+                                   />
+                                 )}
+                                 {/* 10bit indicator */}
+                                 {stream.is10bit && (
+                                   <Chip 
+                                     label="10bit" 
+                                     size="small" 
+                                     sx={{ 
+                                       height: 20, 
+                                       fontSize: '0.7rem', 
+                                       bgcolor: 'rgba(0,150,136,0.2)', // Teal for 10bit
+                                       color: '#009688' 
+                                     }} 
+                                   />
+                                 )}
                               </Box>
+                              <Box component="div" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center', mt: 0.5 }}>
+                                {/* Format (BluRay, WEB-DL) */}
+                                {stream.format && (
+                                  <Typography variant="caption" sx={{ color: 'grey.500' }}>{stream.format}</Typography>
+                                )}
+                                {/* Codec (HEVC, H264) */}
+                                {stream.codec && (
+                                  <Typography variant="caption" sx={{ color: 'grey.500' }}>{stream.codec}</Typography>
+                                )}
+                                {/* Audio (Atmos, DTS) */}
+                                {stream.audio && (
+                                  <Typography variant="caption" sx={{ color: 'grey.500' }}>{stream.audio}</Typography>
+                                )}
+                                {/* Language */}
+                                {stream.language && (
+                                  <Typography variant="caption" sx={{ color: 'grey.500' }}>{stream.language}</Typography>
+                                )}
+                              </Box>
+                              <Typography variant="caption" sx={{ color: 'grey.600', fontSize: '0.7rem', mt: 0.5 }}>
+                                via {stream.addonName} {stream.release_group && `| ${stream.release_group}`}
+                              </Typography>
+                              {/* Cached Info Display */}
+                              {stream.cachedInfo && (
+                                <Typography variant="caption" sx={{ color: '#4caf50', fontSize: '0.7rem', mt: 0.5, display: 'block' }}>
+                                  {stream.cachedInfo}
+                                </Typography>
+                              )}
+                              {/* Full Description Display */}
+                              {stream.description && (
+                                <Typography 
+                                  variant="caption" 
+                                  component="pre" // Use <pre> to preserve whitespace and line breaks
+                                  sx={{ 
+                                    color: 'grey.500', 
+                                    fontSize: '0.65rem', 
+                                    mt: 0.8, 
+                                    display: 'block', 
+                                    whiteSpace: 'pre-wrap', // Ensure wrapping
+                                    wordBreak: 'break-word'  // Ensure long words break
+                                  }}
+                                >
+                                  {stream.description}
+                                </Typography>
+                              )}
                             </Box>
                           }
                           secondaryTypographyProps={{ component: 'div' }}
