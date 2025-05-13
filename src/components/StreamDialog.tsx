@@ -28,6 +28,7 @@ import IconButton from '@mui/material/IconButton';
 import CloseIcon from '@mui/icons-material/Close';
 import { TransitionProps } from '@mui/material/transitions';
 import Collapse from '@mui/material/Collapse';
+import { useTmdbContext } from '@/context/TmdbContext'; // Import TMDB context
 
 // Interfaces (Copied from stream page)
 interface Stream {
@@ -88,6 +89,41 @@ export default function StreamDialog({
   const [loading, setLoading] = useState(false); // Start as false, fetch on open
   const [error, setError] = useState<string | null>(null);
   const [selectedAddon, setSelectedAddon] = useState<string | null>(null);
+  const [conversionError, setConversionError] = useState<string | null>(null); // For ID conversion errors
+
+  const { tmdbApiKey } = useTmdbContext(); // Get TMDB API key
+
+  // Function to convert TMDB ID to IMDb ID
+  const fetchImdbIdFromTmdb = useCallback(async (tmdbNumericId: string, type: 'movie' | 'series'): Promise<string | null> => {
+    if (!tmdbApiKey) {
+      console.warn('StreamDialog: TMDB API key is missing, cannot convert TMDB ID to IMDb ID.');
+      setConversionError('TMDB API key missing. Cannot look up IMDb ID.');
+      return null;
+    }
+    const tmdbType = type === 'series' ? 'tv' : 'movie';
+    const url = `https://api.themoviedb.org/3/${tmdbType}/${tmdbNumericId}/external_ids?api_key=${tmdbApiKey}`;
+    
+    console.log(`StreamDialog: Fetching IMDb ID from TMDB: ${url}`);
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`TMDB External IDs API error ${response.status}: ${errorData.status_message || response.statusText}`);
+      }
+      const data = await response.json();
+      if (data.imdb_id) {
+        console.log(`StreamDialog: Found IMDb ID: ${data.imdb_id} for TMDB ID: ${tmdbNumericId}`);
+        return data.imdb_id;
+      }
+      console.warn(`StreamDialog: IMDb ID not found in TMDB external IDs for ${tmdbNumericId}`);
+      setConversionError(`IMDb ID not found for this TMDB item.`);
+      return null;
+    } catch (err: any) {
+      console.error("StreamDialog: Error fetching IMDb ID from TMDB:", err);
+      setConversionError(`Failed to fetch IMDb ID: ${err.message}`);
+      return null;
+    }
+  }, [tmdbApiKey]);
 
   // Fetch streams logic (adapted from stream page)
   const fetchStreams = useCallback(async () => {
@@ -96,6 +132,7 @@ export default function StreamDialog({
     setLoading(true);
     setStreams([]);
     setError(null);
+    setConversionError(null); // Reset conversion error
 
     try {
       const storedData = localStorage.getItem('installedAddons');
@@ -116,28 +153,52 @@ export default function StreamDialog({
 
       const allStreams: Stream[] = [];
       const fetchPromises: Promise<void>[] = [];
+      let anAddonWasAttempted = false;
 
       // For each addon, try to fetch streams
       for (const addon of loadedAddons) {
+        anAddonWasAttempted = true;
+        let idForAddon = contentId;
+        let videoIdForUrl = contentId; // This will include season/episode for series
+
+        // Check if contentId is TMDB ID and needs conversion
+        if (contentId.startsWith('tmdb:')) {
+          const tmdbNumericIdOnly = contentId.substring(5);
+          const imdbId = await fetchImdbIdFromTmdb(tmdbNumericIdOnly, contentType as 'movie' | 'series');
+          if (imdbId) {
+            idForAddon = imdbId; // Use IMDb ID for this addon
+            videoIdForUrl = imdbId; // Update videoIdForUrl as well
+          } else {
+            // If conversion fails, log it and skip this addon for this TMDB item
+            console.warn(`StreamDialog: Skipping addon ${addon.name} for TMDB item ${contentId} due to failed IMDb ID conversion.`);
+            // Optionally, accumulate these errors to show a more specific message
+            if (!conversionError) setConversionError(prev => prev ? `${prev}, ${addon.name}` : `Could not get IMDb ID for some sources (e.g., ${addon.name})`);
+            continue; // Skip to the next addon
+          }
+        }
+        
+        // Build the final video ID for the URL (including season/episode if applicable)
+        if (contentType === 'series' && season && episode) {
+          videoIdForUrl = `${idForAddon}:${season}:${episode}`;
+        } else {
+          videoIdForUrl = idForAddon; // Ensure it uses the potentially converted ID
+        }
+
         try {
-          // Extract base URL
           const manifestUrlParts = addon.manifestUrl.split('/');
           manifestUrlParts.pop();
           const baseUrl = manifestUrlParts.join('/');
 
-          // Fetch streams
           const fetchPromise = (async () => {
             try {
-              // Use the stream endpoint format: /stream/:type/:videoId.json
-              const streamUrl = `${baseUrl}/stream/${contentType}/${videoId}.json`;
-              console.log(`Fetching streams from ${addon.name}: ${streamUrl}`);
+              const streamUrl = `${baseUrl}/stream/${contentType}/${videoIdForUrl}.json`;
+              console.log(`StreamDialog: Fetching streams from ${addon.name}: ${streamUrl} (using ID: ${videoIdForUrl})`);
 
               const response = await fetch(streamUrl);
               if (!response.ok) {
-                console.warn(`No streams available from ${addon.name}`);
+                console.warn(`No streams available from ${addon.name} for ID ${videoIdForUrl}`);
                 return;
               }
-
               const data = await response.json() as StreamResponse;
 
               if (data && Array.isArray(data.streams) && data.streams.length > 0) {
@@ -166,7 +227,11 @@ export default function StreamDialog({
       await Promise.all(fetchPromises);
 
       if (allStreams.length === 0) {
-        setError('No streaming sources found for this content.');
+        if (conversionError && !error) {
+            setError(conversionError); // Prioritize conversion error if no streams found
+        } else if (!error) {
+            setError(anAddonWasAttempted ? 'No streaming sources found from available addons.' : 'No addons available to fetch streams.');
+        }
       } else {
         // Sort streams by quality (if available)
         const sortedStreams = allStreams.sort((a, b) => {
@@ -209,7 +274,7 @@ export default function StreamDialog({
     } finally {
       setLoading(false);
     }
-  }, [open, contentType, contentId, season, episode, initialAddonId]); // Depend on open state
+  }, [open, contentType, contentId, season, episode, initialAddonId, fetchImdbIdFromTmdb, conversionError, error]);
 
   // Trigger fetch when dialog opens or parameters change
   useEffect(() => {
@@ -311,7 +376,7 @@ export default function StreamDialog({
 
         {/* Content that appears after loading - wrapped in Collapse */}
         <Collapse in={!loading} timeout="auto" unmountOnExit> 
-          {error ? (
+          {error || conversionError ? (
             // Error Alert
             <Alert
               severity="warning"
@@ -324,7 +389,7 @@ export default function StreamDialog({
                 alignItems: 'center'
               }}
             >
-              {error}
+              {error || conversionError}
             </Alert>
           ) : (
             // Streams List and Filter
