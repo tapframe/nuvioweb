@@ -76,6 +76,7 @@ export default function HomePage() {
   const {
     tmdbApiKey,
     isLoadingKey: isLoadingTmdbKey,
+    isTmdbEnabled, // Get the enabled status
     // keyError: tmdbKeyError // We can handle this if needed, e.g. disable TMDB section
   } = useTmdbContext();
 
@@ -280,32 +281,27 @@ export default function HomePage() {
 
 
   useEffect(() => {
-    // Handle addon context errors that might affect decision logic
     if (addonContextError) {
         setPageError(`Addon loading error: ${addonContextError}`);
-        // Potentially stop further processing if addons are crucial and errored
     }
 
     // Decide whether to fetch from TMDB or Stremio Addons
-    if (!isLoadingTmdbKey) { // Wait until TMDB key status is known
-      if (tmdbApiKey) {
+    if (!isLoadingTmdbKey && !isLoadingAddons) { // Wait until *both* contexts have loaded their initial state
+      if (tmdbApiKey && isTmdbEnabled) { // Check for API Key AND enabled status
+        console.log("HomePage: TMDB API Key found and integration enabled. Fetching from TMDB.");
         fetchTmdbHomepageCatalogs(tmdbApiKey);
       } else {
-        // No TMDB key, or it was explicitly removed. Fallback to Stremio addons.
-        // Wait for addons to load before fetching from them.
-        if (!isLoadingAddons) {
-          fetchStremioHomepageCatalogs();
-        } else {
-          console.log("HomePage: Waiting for Stremio addons to load...");
-          setIsLoadingPageData(true); // Explicitly set loading if waiting for addons context
-        }
+        // Fallback to Stremio addons if TMDB key missing OR TMDB is disabled
+        if (!tmdbApiKey) console.log("HomePage: No TMDB API Key found. Fetching from Stremio Addons.");
+        if (tmdbApiKey && !isTmdbEnabled) console.log("HomePage: TMDB integration is disabled. Fetching from Stremio Addons.");
+        fetchStremioHomepageCatalogs();
       }
     } else {
-        console.log("HomePage: Waiting for TMDB API key status...");
-        setIsLoadingPageData(true); // Explicitly set loading if waiting for TMDB context
+        console.log(`HomePage: Waiting for initial context loading... (TMDB Key: ${isLoadingTmdbKey}, Addons: ${isLoadingAddons})`);
+        setIsLoadingPageData(true); // Show loading while waiting for contexts
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tmdbApiKey, isLoadingTmdbKey, installedAddons, isLoadingAddons, addonContextError]);
+  }, [tmdbApiKey, isTmdbEnabled, isLoadingTmdbKey, installedAddons, isLoadingAddons, addonContextError]); // Added isTmdbEnabled dependency
 
 
   // Combined loading state for UI

@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import {
   Box, Typography, TextField, Button, List, ListItem, ListItemText,
   CircularProgress, Alert, Paper, IconButton, FormGroup, FormControlLabel, Checkbox, Divider,
-  Accordion, AccordionSummary, AccordionDetails, Card, CardContent, CardHeader, Tab, Tabs
+  Accordion, AccordionSummary, AccordionDetails, Card, CardContent, CardHeader, Tab, Tabs,
+  Switch
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -35,7 +36,9 @@ export default function AddonsPage() {
     tmdbApiKey,
     setTmdbApiKey,
     isLoadingKey: isLoadingTmdbKey,
-    keyError: tmdbKeyError
+    keyError: tmdbKeyError,
+    isTmdbEnabled,
+    toggleTmdbEnabled
   } = useTmdbContext();
 
   const [addonUrl, setAddonUrl] = useState<string>('');
@@ -227,7 +230,7 @@ export default function AddonsPage() {
             <Typography variant="body2" sx={{ color: 'grey.400', mb: 2 }}>
               Add your TMDB API Key to fetch rich metadata directly from The Movie Database. This can enhance content details and enable other features.
             </Typography>
-            <Box component="form" onSubmit={(e) => { e.preventDefault(); handleSaveTmdbKey(); }} sx={{ display: 'flex', gap: {xs: 1, sm: 2}, alignItems: 'flex-start', flexDirection: {xs: 'column', sm: 'row'} }}>
+            <Box component="form" onSubmit={(e) => { e.preventDefault(); handleSaveTmdbKey(); }} sx={{ display: 'flex', gap: {xs: 1, sm: 2}, alignItems: 'flex-start', flexDirection: {xs: 'column', sm: 'row'}, mb: 2 }}>
               <TextField
                 fullWidth
                 label="TMDB API Key (v3 auth)"
@@ -264,6 +267,31 @@ export default function AddonsPage() {
                 Save API Key
               </Button>
             </Box>
+            <FormGroup sx={{mt: 1, mb:1}}>
+                <FormControlLabel 
+                    control={
+                        <Switch 
+                            checked={isTmdbEnabled}
+                            onChange={toggleTmdbEnabled}
+                            disabled={!tmdbApiKey || isLoadingTmdbKey}
+                            sx={{ 
+                                '& .MuiSwitch-switchBase.Mui-checked': {
+                                    color: '#01d277',
+                                    '&:hover': {
+                                        backgroundColor: 'rgba(1, 210, 119, 0.08)',
+                                    },
+                                },
+                                '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+                                    backgroundColor: '#01d277',
+                                },
+                            }}
+                        />
+                    }
+                    label={`TMDB Integration: ${isTmdbEnabled ? 'Enabled' : 'Disabled'}`}
+                    sx={{ color: tmdbApiKey ? 'grey.200' : 'grey.600'}}
+                />
+            </FormGroup>
+
             {tmdbKeySaveMessage && (
               <Alert 
                 severity={tmdbKeySaveMessage.includes("successfully") ? "success" : tmdbKeySaveMessage.startsWith("TMDB Key Error:") ? "warning" : "error"} 
@@ -275,10 +303,10 @@ export default function AddonsPage() {
             )}
             {tmdbApiKey && !tmdbKeySaveMessage && !isLoadingTmdbKey && (
                 <Typography variant="caption" sx={{ color: 'grey.500', mt:1, display: 'block'}}>
-                    An API key is currently configured.
+                    API key is configured. Toggle above to enable/disable TMDB features.
                 </Typography>
             )}
-            {isLoadingTmdbKey && (
+             {isLoadingTmdbKey && (
                  <Typography variant="caption" sx={{ color: 'grey.500', mt:1, display: 'block'}}>
                     Loading TMDB Key status...
                 </Typography>
