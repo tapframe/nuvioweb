@@ -102,10 +102,24 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBotto
   // console.log(`Image type: ${imageType}`);
 
   return (
-    <Box sx={{ mb: disableBottomMargin ? 0 : 5, ml: { xs: 3, md: 7.5 } /* Match Hero margin */ }}>
-      <Box sx={{ display: 'flex', alignItems: 'baseline', mb: 2 }}>
+    <Box sx={{ 
+      mb: disableBottomMargin ? 0 : 4, // Reduced bottom margin between rows
+      ml: { xs: 3, md: 7.5 },
+      position: 'relative',
+      mt: { xs: -3, md: -5 }, // Negative margin to pull up the first row closer to hero
+      zIndex: 5 // Higher z-index to ensure the row appears over the hero gradient
+    }}>
+      <Box sx={{ display: 'flex', alignItems: 'baseline', mb: 1 }}>
         {/* Main catalog title */}
-        <Typography variant="h5" component="h2" fontWeight="bold" sx={{ color: 'white' }}>
+        <Typography 
+          variant="h6" 
+          component="h2" 
+          fontWeight="bold" 
+          sx={{ 
+            color: 'white',
+            fontSize: { xs: '1.1rem', md: '1.3rem' } 
+          }}
+        >
           {catalogName}
         </Typography>
         

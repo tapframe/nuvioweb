@@ -413,116 +413,75 @@ const Hero: React.FC = () => {
         ))}
       </Head>
     
-      {/* Image preloader component */}
-      <ImagePreloader imageUrls={imagesToPreload} />
-      
-      <Box
-        sx={{
-          position: 'relative',
-          height: { xs: '60vh', sm: '75vh', md: '90vh' },
-          width: '100%',
-          display: 'flex',
-          alignItems: 'flex-end',
-          color: 'white',
-          '&::after': {
-            content: '""',
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 1,
-            backgroundImage: 
-              'linear-gradient(to right, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0) 50%), linear-gradient(to top, rgba(20, 20, 20, 1) 0%, transparent 20%)',
-          }
-        }}
-      >
-        {/* Background Image with Transition */}
-        {isLoading ? (
-          <Box sx={{ 
-            position: 'absolute', 
-            top: 0, 
-            left: 0, 
-            right: 0, 
-            bottom: 0, 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            backgroundColor: '#141414'
-          }}>
-            <CircularProgress color="inherit" />
-          </Box>
-        ) : (
+      <Box sx={{ 
+        position: 'relative', 
+        height: {xs: '80vh', sm: '90vh', md: '90vh'},
+        overflow: 'hidden',
+        mb: 0, // Remove bottom margin to reduce gap with first row
+        maxHeight: '85vh', // Limit maximum height on large screens
+        '&::after': { // Add gradient overlay at the bottom
+          content: '""',
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: '100%',
+          background: 'linear-gradient(0deg, rgba(20,20,20,1) 0%, rgba(20,20,20,0.8) 15%, rgba(20,20,20,0) 40%)',
+          pointerEvents: 'none' // So it doesn't interfere with clicks
+        }
+      }}>
+        {/* Preload next images */}
+        {!isLoading && !error && heroItems.length > 0 && (
+          <ImagePreloader imageUrls={getImagesToPreload()} />
+        )}
+
+        {/* Background Image - Conditionally render and apply fade animation */}
+        {!isLoading && !error && heroContent && (
           <Box
             sx={{
               position: 'absolute',
               top: 0,
               left: 0,
-              right: 0,
-              bottom: 0,
-              transition: 'opacity 1s ease, transform 1s ease',
+              width: '100%',
+              height: '100%',
               opacity: fadeIn ? 1 : 0,
-              transform: fadeIn ? 'scale(1)' : 'scale(1.05)',
-              overflow: 'hidden' // Ensure the image doesn't overflow
+              transition: 'opacity 0.5s ease-in-out',
+              zIndex: 0
             }}
           >
-            <Box
-              sx={{
-                position: 'absolute',
-                top: '-10%', // Pull up slightly to show more of the image
-                left: '-5%',
-                right: '-5%',
-                bottom: '-5%',
-                width: '110%',
-                height: '120%'
-              }}
-            >
-              <Image
-                src={displayData.backgroundImage}
-                alt="Hero background"
-                layout="fill"
-                objectFit="cover"
-                objectPosition="center 20%"
-                quality={90}
-                priority
-              />
-            </Box>
-            
-            {/* Preload next image */}
-            {nextHeroContent?.background && (
-              <div style={{ display: 'none' }}>
-                <Image
-                  src={getEnhancedImageUrl(nextHeroContent.background)}
-                  alt="Next hero background"
-                  layout="fill"
-                  objectFit="cover"
-                  objectPosition="center 20%"
-                  priority
-                />
-              </div>
-            )}
+            <Image
+              src={getEnhancedImageUrl(heroContent.background || heroContent.poster || fallbackHeroData.backgroundImage)}
+              alt={heroContent.name || 'Featured Title'}
+              layout="fill"
+              objectFit="cover"
+              priority={true}
+              quality={90}
+            />
           </Box>
         )}
 
-        {/* Content Box with Transition */}
-        <Box 
-          sx={{ 
-            position: 'relative', 
-            zIndex: 2, 
-            ml: { xs: 3, md: 7.5 },
-            mb: { xs: 6, md: 10 },
-            maxWidth: { xs: '90%', sm: '70%', md: '50%', lg: '45%' },
-            transition: 'opacity 1s ease, transform 1s ease',
+        {/* Title Logo and Content Information */}
+        <Box
+          sx={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            width: '100%',
+            padding: { xs: '1rem', sm: '3rem', md: '4rem' },
+            paddingRight: { xs: '1rem', sm: '40%', md: '55%' }, // Make space on the right on larger screens
+            zIndex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-start',
             opacity: fadeIn ? 1 : 0,
-            transform: fadeIn 
-              ? 'translateY(0)' 
-              : 'translateY(20px)'
+            transition: 'opacity 0.5s ease-in-out',
+            mb: 5 // Add bottom margin to content for space from bottom of hero
           }}
         >
-          {/* Title or Logo */}
+          {/* Title Logo - Using original logic */}
           <Box sx={{ mb: 2, width: { xs: '60%', sm: '50%', md: '45%' } }}>
             {displayData.logoImage ? (
-              <Image 
+              <Image
                 src={displayData.logoImage}
                 alt="Title Logo"
                 width={500}
@@ -531,100 +490,40 @@ const Hero: React.FC = () => {
                 priority
               />
             ) : (
-              <Typography variant="h2" component="h1" fontWeight="bold" sx={{ mb: 2 }}>
+              <Typography variant="h2" component="h1" fontWeight="bold" sx={{ 
+                mb: 2, 
+                color: 'white',
+                textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
+                fontSize: { xs: '2rem', sm: '3rem', md: '3.5rem' }
+              }}>
                 {displayData.title}
               </Typography>
             )}
-            
-            {/* Preload next logo if available */}
-            {nextHeroContent?.logo && (
-              <div style={{ display: 'none' }}>
-                <Image 
-                  src={getEnhancedImageUrl(nextHeroContent.logo)}
-                  alt="Next title logo"
-                  width={500}
-                  height={135}
-                  layout="responsive"
-                  priority
-                />
-              </div>
-            )}
           </Box>
 
-          {/* Meta Information */}
-          {heroContent && (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-              {heroContent.imdbRating && (
-                <Typography variant="body1" component="span" fontWeight="bold">
-                  IMDb {heroContent.imdbRating}
-                </Typography>
-              )}
-              {heroContent.releaseInfo && (
-                <Typography variant="body1" component="span">
-                  {heroContent.releaseInfo}
-                </Typography>
-              )}
-              {heroContent.runtime && (
-                <Typography variant="body1" component="span">
-                  {heroContent.runtime}
-                </Typography>
-              )}
-            </Box>
-          )}
-
-          {/* Top 10 Section - Only show if we're using fallback data */}
-          {!heroContent && (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-              <Top10Badge />
-              <Typography variant="h6" component="p" fontWeight="bold" sx={{ fontSize: { xs: '1rem', md: '1.2rem' } }}>
-                {fallbackHeroData.top10Text}
-              </Typography>
-            </Box>
-          )}
-          
-          {/* Description */}
+          {/* Description - Using original logic */}
           <Typography 
             variant="body1" 
             component="p" 
             sx={{ 
-              mb: 3, 
+              mb: 3,
               fontSize: { xs: '0.9rem', sm: '1rem', md: '1.1rem' },
               maxWidth: '600px', 
               lineHeight: 1.4,
+              color: 'white',
+              textShadow: '1px 1px 2px rgba(0,0,0,0.7)'
             }}
           >
             {displayData.description}
           </Typography>
 
-          {/* Genre Tags */}
-          {heroContent?.genres && heroContent.genres.length > 0 && (
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 3 }}>
-              {heroContent.genres.map((genre, index) => (
-                <Typography 
-                  key={index} 
-                  variant="body2" 
-                  component="span" 
-                  sx={{ 
-                    color: 'white',
-                    backgroundColor: 'rgba(109, 109, 110, 0.4)',
-                    px: 1.5, 
-                    py: 0.5,
-                    borderRadius: '4px'
-                  }}
-                >
-                  {genre}
-                </Typography>
-              ))}
-            </Box>
-          )}
-
-          {/* Buttons */}
+          {/* Action Buttons - Using original logic */}
           <Box sx={{ display: 'flex', gap: 2 }}>
             <Button
               variant="contained"
               startIcon={<img src="/assets/images/play-icon-new.svg" alt="" width={24} height={24} />}
               onClick={handlePlayClick}
-              sx={{ 
+              sx={{
                 backgroundColor: 'white',
                 color: 'black',
                 fontWeight: 'bold',
@@ -657,36 +556,24 @@ const Hero: React.FC = () => {
               More Info
             </Button>
           </Box>
-          
-          {/* Progress Indicators */}
-          {heroItems.length > 1 && (
-            <Box sx={{ display: 'flex', gap: 1, mt: 4 }}>
-              {heroItems.map((_, index) => (
-                <Box 
-                  key={index}
-                  sx={{
-                    width: '12px',
-                    height: '4px',
-                    borderRadius: '2px',
-                    backgroundColor: index === currentIndex ? 'white' : 'rgba(255, 255, 255, 0.4)',
-                    transition: 'background-color 0.3s ease'
-                  }}
-                />
-              ))}
-            </Box>
-          )}
         </Box>
-      </Box>
 
-      {/* Add the Stream Dialog */}
-      <StreamDialog
-        open={isStreamDialogOpen}
-        onClose={handleStreamDialogClose}
-        contentType={streamContentType}
-        contentId={streamContentId}
-        contentName={streamContentName}
-        episodeInfo=""
-      />
+        {/* Loading Indicator */}
+        {isLoading && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+            <CircularProgress sx={{ color: 'red' }} />
+          </Box>
+        )}
+
+        {/* Stream Dialog */}
+        <StreamDialog
+          open={isStreamDialogOpen}
+          contentType={streamContentType}
+          contentId={streamContentId}
+          contentName={streamContentName}
+          onClose={handleStreamDialogClose}
+        />
+      </Box>
     </>
   );
 };
