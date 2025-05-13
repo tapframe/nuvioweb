@@ -1,15 +1,12 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { SxProps, Theme } from '@mui/material/styles';
 import Skeleton from '@mui/material/Skeleton';
-import IconButton from '@mui/material/IconButton';
-import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
-import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 
 // Add the image enhancement helper function
 const getEnhancedImageUrl = (url: string): string => {
@@ -52,10 +49,6 @@ interface MediaRowProps {
 
 const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBottomMargin, imageType = 'poster' }) => {
   const router = useRouter();
-  const rowRef = useRef<HTMLDivElement>(null);
-  const [showControls, setShowControls] = useState(false);
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(false);
   
   // Split the title by the bullet character to separate catalog name from addon name
   const titleParts = title.split(' • ');
@@ -71,39 +64,10 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBotto
 
   const isBackdrop = imageType === 'backdrop';
 
-  // Check if we can scroll left or right
-  const checkScrollability = () => {
-    if (rowRef.current) {
-      setCanScrollLeft(rowRef.current.scrollLeft > 0);
-      setCanScrollRight(
-        rowRef.current.scrollLeft < 
-        rowRef.current.scrollWidth - rowRef.current.clientWidth - 10 // 10px threshold
-      );
-    }
-  };
-
-  // Scroll the row left or right
-  const handleScroll = (direction: 'left' | 'right') => {
-    if (rowRef.current) {
-      const scrollAmount = rowRef.current.clientWidth * 0.8; // Scroll 80% of the visible width
-      const newPosition = direction === 'left' 
-        ? rowRef.current.scrollLeft - scrollAmount 
-        : rowRef.current.scrollLeft + scrollAmount;
-      
-      rowRef.current.scrollTo({
-        left: newPosition,
-        behavior: 'smooth'
-      });
-      
-      // Update scroll buttons visibility after scrolling
-      setTimeout(checkScrollability, 400); // Check after scroll animation
-    }
-  };
-
   const getItemSx = (): SxProps<Theme> => {
     const baseStyles: SxProps<Theme> = {
       position: 'relative',
-      borderRadius: '2px',
+      borderRadius: '6px',
       overflow: 'hidden',
       backgroundColor: 'grey.800',
       transition: 'transform 0.3s ease, box-shadow 0.3s ease',
@@ -138,20 +102,7 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBotto
   // console.log(`Image type: ${imageType}`);
 
   return (
-    <Box 
-      sx={{ 
-        mb: disableBottomMargin ? 0 : 5, 
-        ml: { xs: 2, md: 4 },
-        mr: { xs: 2, md: 4 },
-        position: 'relative',
-        mt: { xs: -4, md: -4 }
-      }}
-      onMouseEnter={() => {
-        setShowControls(true);
-        checkScrollability();
-      }}
-      onMouseLeave={() => setShowControls(false)}
-    >
+    <Box sx={{ mb: disableBottomMargin ? 0 : 5, ml: { xs: 3, md: 7.5 } /* Match Hero margin */ }}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', mb: 2 }}>
         {/* Main catalog title */}
         <Typography variant="h5" component="h2" fontWeight="bold" sx={{ color: 'white' }}>
@@ -175,38 +126,11 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBotto
         )}
       </Box>
       
-      {/* Scroll Left Button */}
-      {showControls && canScrollLeft && (
-        <IconButton
-          onClick={() => handleScroll('left')}
-          sx={{
-            position: 'absolute',
-            left: 0,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            zIndex: 20,
-            color: 'white',
-            bgcolor: 'rgba(0, 0, 0, 0.5)',
-            '&:hover': {
-              bgcolor: 'rgba(0, 0, 0, 0.7)'
-            },
-            width: '40px',
-            height: '80px',
-            borderRadius: '4px'
-          }}
-        >
-          <ArrowBackIosNewIcon />
-        </IconButton>
-      )}
-      
-      {/* Media Items Row */}
       <Box 
-        ref={rowRef}
-        onScroll={checkScrollability}
         sx={{
           display: 'flex',
           overflowX: 'auto',
-          gap: 1, // Reduced from 2.5 to 1 to decrease space between items
+          gap: 2.5,
           pb: 2, // Padding at the bottom for scrollbar room
           pt: 1, // Add some padding top to allow for scale effect without cutting off top
           perspective: '1000px', // For 3D hover effect if desired
@@ -280,30 +204,6 @@ const MediaRow: React.FC<MediaRowProps> = ({ title, items, addonId, disableBotto
           </Box>
         ))}
       </Box>
-      
-      {/* Scroll Right Button */}
-      {showControls && canScrollRight && (
-        <IconButton
-          onClick={() => handleScroll('right')}
-          sx={{
-            position: 'absolute',
-            right: 0,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            zIndex: 20,
-            color: 'white',
-            bgcolor: 'rgba(0, 0, 0, 0.5)',
-            '&:hover': {
-              bgcolor: 'rgba(0, 0, 0, 0.7)'
-            },
-            width: '40px',
-            height: '80px',
-            borderRadius: '4px'
-          }}
-        >
-          <ArrowForwardIosIcon />
-        </IconButton>
-      )}
     </Box>
   );
 };
